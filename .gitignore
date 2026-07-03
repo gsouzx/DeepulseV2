@@ -1,0 +1,7 @@
+node_modules/
+backend/config/scores.json
+backend/config/stats.json
+.env
+.DS_Store
+Thumbs.db
+*.log
