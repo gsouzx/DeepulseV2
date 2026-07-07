@@ -138,6 +138,8 @@
       font-size: 10px;
     }
 
+    #mp-hud-tr { top: 52px; right: 0; text-align: right; }
+
     #mp-health-bar-wrap {
       position: absolute;
       bottom: 14px; left: 50%; transform: translateX(-50%);
@@ -234,6 +236,147 @@
       background: rgba(123,47,255,0.2);
       box-shadow: none;
       border: 1px solid rgba(123,47,255,0.3);
+    }
+
+    /* ===== TOUCH CONTROLS (mobile) ===== */
+    #touch-controls {
+      position: absolute; inset: 0;
+      pointer-events: none;
+      z-index: 20;
+      display: none;
+      touch-action: none;
+    }
+    #touch-controls.visible { display: block; }
+
+    .tc-control {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      pointer-events: auto;
+      touch-action: none;
+    }
+
+    #touch-controls.tc-editing .tc-control {
+      outline: 1px dashed rgba(0,245,212,0.5);
+      outline-offset: 6px;
+      border-radius: 50%;
+    }
+
+    .tc-joystick-base {
+      width: 100%; height: 100%;
+      border-radius: 50%;
+      position: relative;
+      background: rgba(9,28,56,0.45);
+      border: 2px solid rgba(0,245,212,0.35);
+      box-shadow: 0 0 20px rgba(0,245,212,0.12) inset;
+    }
+
+    .tc-joystick-knob {
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 46%; height: 46%;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0,245,212,0.35);
+      border: 1px solid rgba(0,245,212,0.7);
+      box-shadow: 0 0 16px rgba(0,245,212,0.5);
+      pointer-events: none;
+      transition: transform 0.05s linear;
+    }
+
+    .tc-action-btn {
+      width: 100%; height: 100%;
+      border-radius: 50%;
+      background: rgba(9,28,56,0.45);
+      border: 2px solid rgba(0,245,212,0.35);
+      box-shadow: 0 0 20px rgba(0,245,212,0.12) inset;
+      color: var(--pulse);
+      font-family: var(--font-hud);
+      font-size: clamp(20px, 6vmin, 32px);
+      display: flex; align-items: center; justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .tc-action.tc-pressed .tc-action-btn {
+      background: rgba(0,245,212,0.3);
+      box-shadow: 0 0 26px rgba(0,245,212,0.5) inset;
+    }
+
+    .tc-drag-handle {
+      position: absolute;
+      top: -6px; right: -6px;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: var(--pulse);
+      color: var(--abyss);
+      display: none;
+      align-items: center; justify-content: center;
+      font-size: 12px;
+      box-shadow: 0 0 10px var(--pulse);
+    }
+
+    #touch-controls.tc-editing .tc-drag-handle { display: flex; }
+
+    .tc-edit-toggle {
+      position: absolute;
+      top: 14px; left: 50%;
+      transform: translateX(-50%);
+      width: 34px; height: 34px;
+      border-radius: 50%;
+      background: rgba(9,28,56,0.6);
+      border: 1px solid rgba(0,245,212,0.4);
+      color: var(--pulse);
+      pointer-events: auto;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+      opacity: 0.55;
+    }
+
+    #touch-controls.tc-editing .tc-edit-toggle {
+      opacity: 1;
+      border-color: var(--pulse);
+    }
+
+    .tc-edit-panel {
+      position: absolute;
+      bottom: 14px; left: 50%;
+      transform: translateX(-50%);
+      width: min(320px, 86vw);
+      padding: 14px 16px;
+      background: rgba(9,28,56,0.85);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      pointer-events: auto;
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    #touch-controls.tc-editing .tc-edit-panel { display: flex; }
+
+    .tc-edit-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      font-family: var(--font-hud);
+      font-size: 10px;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+    }
+
+    .tc-edit-row input[type="range"] {
+      flex: 1;
+      accent-color: var(--pulse);
+    }
+
+    .tc-edit-actions {
+      display: flex; gap: 8px; margin-top: 4px;
+    }
+
+    .tc-edit-actions .btn {
+      flex: 1;
+      padding: 8px 10px;
+      font-size: 10px;
+      letter-spacing: 2px;
+      margin-bottom: 0;
     }
 
     /* Wave notification */
@@ -346,6 +489,12 @@
       position: absolute; inset: 0;
       background: linear-gradient(180deg, rgba(255,255,255,0.08) 0%, transparent 100%);
       pointer-events: none;
+    }
+
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none !important;
     }
 
     .btn-primary {
@@ -519,6 +668,16 @@
       min-height: 16px;
     }
 
+    .mp-gameover-help {
+      display: none;
+      font-family: var(--font-hud);
+      font-size: 11px;
+      letter-spacing: 1px;
+      color: var(--pulse);
+      text-shadow: 0 0 10px var(--pulse);
+      margin-bottom: 20px;
+    }
+
     /* ===== GAME OVER SCREEN ===== */
     #gameover-screen {
       background: radial-gradient(ellipse at 50% 50%, rgba(255,45,85,0.06) 0%, transparent 70%);
@@ -686,9 +845,63 @@
   <div id="mp-hud">
     <div class="mp-info" id="mp-room-info">Conectando...</div>
     <button class="btn btn-secondary mp-leave-btn" id="btn-mp-leave">Sair</button>
+    <div class="hud-corner" id="mp-hud-tr">
+      <div class="hud-label">Wave</div>
+      <div class="hud-value" id="mp-hud-wave">1</div>
+    </div>
     <div id="mp-health-bar-wrap">
       <div class="bar-label">HULL INTEGRITY</div>
       <div id="mp-health-bar-outer"><div id="mp-health-bar-inner"></div></div>
+    </div>
+  </div>
+
+  <!-- MULTIPLAYER GAME OVER (death screen — Reviver stays in the same room after a cooldown, or a teammate can revive on the spot; Sair leaves) -->
+  <div class="screen" id="mp-gameover-screen">
+    <div class="go-title">PROBE LOST</div>
+    <div class="go-subtitle">Signal went dark in the abyss</div>
+
+    <div class="stats-row">
+      <div class="stat-box">
+        <span class="label">Tempo sobrevivido</span>
+        <span class="value" id="mp-gameover-time">0s</span>
+      </div>
+    </div>
+
+    <div class="mp-gameover-help" id="mp-gameover-help"></div>
+
+    <button class="btn btn-primary" id="btn-mp-revive">Reviver</button>
+    <button class="btn btn-secondary" id="btn-mp-gameover-leave" style="margin-top:4px">Sair</button>
+  </div>
+
+  <!-- TOUCH CONTROLS (mobile only — hidden on desktop, see touch-controls.ts) -->
+  <div id="touch-controls">
+    <div class="tc-control tc-joystick" id="tc-joystick">
+      <div class="tc-joystick-base">
+        <div class="tc-joystick-knob" id="tc-joystick-knob"></div>
+      </div>
+      <div class="tc-drag-handle" aria-hidden="true">✥</div>
+    </div>
+
+    <div class="tc-control tc-action" id="tc-action">
+      <button class="tc-action-btn" id="tc-action-btn" type="button" aria-label="Shield burst">⚡</button>
+      <div class="tc-drag-handle" aria-hidden="true">✥</div>
+    </div>
+
+    <button class="tc-edit-toggle" id="tc-edit-toggle" type="button" aria-label="Editar controles">✎</button>
+
+    <div class="tc-edit-panel" id="tc-edit-panel">
+      <div class="tc-edit-row">
+        <span>Joystick</span>
+        <input type="range" id="tc-scale-joystick" min="70" max="150" step="5" value="100" />
+      </div>
+      <div class="tc-edit-row">
+        <span>Ação</span>
+        <input type="range" id="tc-scale-action" min="70" max="150" step="5" value="100" />
+      </div>
+      <div class="tc-edit-actions">
+        <button class="btn btn-secondary" id="tc-reset-btn" type="button">Restaurar padrão</button>
+        <button class="btn btn-primary" id="tc-done-btn" type="button">Concluir</button>
+      </div>
     </div>
   </div>
 
@@ -737,6 +950,7 @@
     <button class="btn btn-secondary" id="btn-lb">Leaderboard</button>
     <button class="btn btn-secondary" id="btn-skins" style="margin-top:4px">Probes</button>
     <button class="btn btn-secondary" id="btn-mp" style="margin-top:4px">Multiplayer (teste)</button>
+    <button class="btn btn-secondary" id="btn-mp-lb" style="margin-top:4px">Ranking Multiplayer</button>
   </div>
 
   <!-- LEADERBOARD SCREEN -->
@@ -757,6 +971,25 @@
       </tbody>
     </table>
     <button class="btn btn-secondary" id="btn-lb-back">← Return</button>
+  </div>
+
+  <!-- MULTIPLAYER LEADERBOARD SCREEN — ranks whole room sessions (co-op), not individuals; no nickname system yet. -->
+  <div class="screen" id="mp-lb-screen">
+    <div class="screen-title">⬡ Ranking Multiplayer</div>
+    <table class="lb-table" id="mp-lb-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Wave</th>
+          <th>Duração</th>
+          <th>Jogadores</th>
+        </tr>
+      </thead>
+      <tbody id="mp-lb-body">
+        <tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:24px">Connecting to server...</td></tr>
+      </tbody>
+    </table>
+    <button class="btn btn-secondary" id="btn-mp-lb-back">← Return</button>
   </div>
 
   <!-- SKINS SCREEN -->

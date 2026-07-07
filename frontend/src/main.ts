@@ -27,6 +27,7 @@ import {
   getEffectiveRadius,
 } from './skins';
 import { MultiplayerClient } from './multiplayer';
+import { TouchControls } from './touch-controls';
 import { ENEMY_TYPES, findEnemyType } from './entities/enemy-types';
 import { glow, noGlow } from './rendering/glow';
 
@@ -134,10 +135,15 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
+// Mobile joystick + action button — no-op shell on desktop (see touch-controls.ts).
+const touchControls = new TouchControls();
+touchControls.onAction(() => { if (state === 'playing') activateShield(); });
+
 // ── Screen Manager ────────────────────────────────────
 const screens = {
   menu:     document.getElementById('menu-screen'),
   lb:       document.getElementById('lb-screen'),
+  mpLb:     document.getElementById('mp-lb-screen'),
   skins:    document.getElementById('skins-screen'),
   gameover: document.getElementById('gameover-screen'),
 };
@@ -256,9 +262,21 @@ function updateProbe(dt) {
   if (keys['KeyA'] || keys['ArrowLeft'])  ax -= 1;
   if (keys['KeyD'] || keys['ArrowRight']) ax += 1;
 
+  // Touch joystick contributes an analog vector (magnitude 0..1) on top of the
+  // keyboard's digital one; a lone keyboard press still normalizes to exactly 1.
+  const touchMove = touchControls.getMoveVector();
+  ax += touchMove.x;
+  ay += touchMove.y;
+
   const mag = Math.hypot(ax, ay);
-  if (mag > 0) { ax /= mag; ay /= mag; probe.thrustTime += dt; }
-  else         { probe.thrustTime = 0; }
+  if (mag > 0) {
+    const clampedMag = Math.min(mag, 1);
+    ax = (ax / mag) * clampedMag;
+    ay = (ay / mag) * clampedMag;
+    probe.thrustTime += dt;
+  } else {
+    probe.thrustTime = 0;
+  }
 
   probe.vx = lerp(probe.vx, ax * CFG.probeSpeed, 8 * dt);
   probe.vy = lerp(probe.vy, ay * CFG.probeSpeed, 8 * dt);
@@ -737,7 +755,12 @@ function loop(now) {
   const dt = Math.max(0, Math.min((now - lastTime) / 1000, 0.05));
   lastTime = now;
 
-  if (state === 'mp') {
+  touchControls.setVisible(state === 'playing' || state === 'paused' || state === 'mp');
+
+  if (state === 'mp' || state === 'mp-dead') {
+    // Kept alive during mp-dead too — a downed player still watches
+    // teammates/enemies move behind the death screen (updateMultiplayer
+    // itself skips input/movement when !mpAlive; see there).
     drawBg(dt);
     updateMultiplayer(dt, now);
     updateParticles(dt);
@@ -799,6 +822,33 @@ async function submitScore(playerName) {
   } catch {
     return null;
   }
+}
+
+/** Room sessions, not individuals — there's no nickname system yet, so this ranks co-op runs by how far the shared wave got. */
+async function fetchMpLeaderboard() {
+  try {
+    const res  = await fetch(`${API_BASE}/mp-leaderboard`);
+    const data = await res.json();
+    return data.data || [];
+  } catch {
+    return [];
+  }
+}
+
+function renderMpLeaderboard(scores) {
+  const tbody = document.getElementById('mp-lb-body');
+  if (!scores || scores.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:24px">Nenhuma sala concluída ainda. Seja o primeiro!</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = scores.map((s, i) => `
+    <tr>
+      <td><span class="rank-num ${i===0?'gold':i===1?'silver':i===2?'bronze':''}">${i + 1}</span></td>
+      <td>${s.wave}</td>
+      <td>${Math.floor(s.durationSeconds / 60)}m ${s.durationSeconds % 60}s</td>
+      <td>${s.peakPlayers}</td>
+    </tr>
+  `).join('');
 }
 
 function renderLeaderboard(scores) {
@@ -878,10 +928,16 @@ function renderSkinsScreen() {
 }
 
 // ── Multiplayer (test mode) ───────────────────────────
+const MP_SELF_REVIVE_DELAY_MS = 10000; // mirrors the server's SELF_REVIVE_DELAY_MS — just for immediate UI feedback before the first status update arrives
 let mpConnectError = '';
 let mpProbeRadius = CFG.probeRadius;
 let mpHealth = 0;
 let mpMaxHealth = 100;
+let mpAlive = true;
+let mpSurvivalTime = 0;
+let mpWave = 1;
+let mpReviveProgress = 0; // 0..1, from a nearby teammate reviving us
+let mpSelfReviveRemainingMs = 0;
 
 function updateMpRoomInfo() {
   const el = document.getElementById('mp-room-info');
@@ -890,8 +946,10 @@ function updateMpRoomInfo() {
     el.textContent = `Erro de conexão: ${mpConnectError} — o backend está rodando (npm run dev na pasta backend)?`;
     return;
   }
+  const aliveRemote = Array.from(mpRemote.values()).filter(p => p.alive !== false).length;
+  const aliveCount = aliveRemote + (mpAlive ? 1 : 0);
   el.textContent = mpRoomId
-    ? `Sala: ${mpRoomId} · Jogadores: ${mpRemote.size + 1} · Inimigos: ${mpEnemies.size}`
+    ? `Sala: ${mpRoomId} · Jogadores: ${mpRemote.size + 1} (${aliveCount} vivos) · Inimigos: ${mpEnemies.size}`
     : 'Conectando...';
 }
 
@@ -900,13 +958,96 @@ function updateMpHealthUI() {
   document.getElementById('mp-health-bar-inner').style.width = pct + '%';
 }
 
-/** Applies the server's canonical health for the local player, bursting on damage — same visual feedback as single-player's hit reaction. */
-function applyMpSelfHealth(newHealth) {
-  if (newHealth < mpHealth) {
+function updateMpWaveUI() {
+  document.getElementById('mp-hud-wave').textContent = mpWave;
+}
+
+function showMpWaveNotify() {
+  const el = document.getElementById('wave-notify');
+  el.textContent = `WAVE ${mpWave}`;
+  el.style.opacity = '1';
+  setTimeout(() => { el.style.opacity = '0'; }, 2000);
+}
+
+/** The room's shared wave only ever goes up while a client is connected — a jump straight to the notify + HUD update, no transition state needed client-side (the server already gated it on enough kills). */
+function applyMpWave(newWave) {
+  if (newWave > mpWave) {
+    mpWave = newWave;
+    showMpWaveNotify();
+  } else {
+    mpWave = newWave;
+  }
+  updateMpWaveUI();
+}
+
+/** Reflects the server's canonical health/revive status for the local player. Bursts on damage (same feedback as single-player's hit reaction), and flips the death screen on in either direction — dying, or getting revived by a teammate while already on it. */
+function applyMpSelfStatus(p) {
+  if (p.health < mpHealth) {
     burst(mpProbe.x, mpProbe.y, 'rgb(255,45,85)', 6, 80);
   }
-  mpHealth = newHealth;
+  mpHealth = p.health;
   updateMpHealthUI();
+
+  if (mpHealth <= 0 && mpAlive) {
+    mpAlive = false;
+    handleMpDeath();
+  } else if (mpHealth > 0 && !mpAlive) {
+    mpAlive = true;
+    completeMpRevive();
+  }
+
+  mpReviveProgress = p.reviveProgress || 0;
+  mpSelfReviveRemainingMs = p.selfReviveRemainingMs || 0;
+  updateMpDeathScreenUI();
+}
+
+function updateMpDeathScreenUI() {
+  if (state !== 'mp-dead') return;
+  const btn = document.getElementById('btn-mp-revive');
+  if (mpSelfReviveRemainingMs > 0) {
+    btn.disabled = true;
+    btn.textContent = `Reviver (${Math.ceil(mpSelfReviveRemainingMs / 1000)}s)`;
+  } else {
+    btn.disabled = false;
+    btn.textContent = 'Reviver';
+  }
+  const helpEl = document.getElementById('mp-gameover-help');
+  if (mpReviveProgress > 0) {
+    helpEl.style.display = 'block';
+    helpEl.textContent = `Um colega está te reanimando... ${Math.round(mpReviveProgress * 100)}%`;
+  } else {
+    helpEl.style.display = 'none';
+  }
+}
+
+function handleMpDeath() {
+  state = 'mp-dead';
+  mpSelfReviveRemainingMs = MP_SELF_REVIVE_DELAY_MS;
+  document.getElementById('mp-hud').classList.remove('visible');
+  document.getElementById('mp-gameover-time').textContent = Math.floor(mpSurvivalTime) + 's';
+  document.getElementById('mp-gameover-screen').classList.add('active');
+  updateMpDeathScreenUI();
+}
+
+/** Shared tail of both revive paths (self-service button, or a teammate finishing the job) — leaves the death screen and rejoins the action. */
+function completeMpRevive() {
+  mpSurvivalTime = 0;
+  mpReviveProgress = 0;
+  mpSelfReviveRemainingMs = 0;
+  mpProbe = { x: canvas.width / 2, y: canvas.height / 2 };
+  document.getElementById('mp-gameover-screen').classList.remove('active');
+  document.getElementById('mp-hud').classList.add('visible');
+  state = 'mp';
+  lastTime = performance.now();
+}
+
+function reviveMultiplayer() {
+  if (mpSelfReviveRemainingMs > 0) return;
+  mpClient.respawn();
+  mpAlive = true;
+  mpHealth = mpMaxHealth;
+  updateMpHealthUI();
+  completeMpRevive();
 }
 
 // World-space (server) <-> local canvas pixel space (this client) conversion.
@@ -924,6 +1065,7 @@ function enterMultiplayer() {
   blurActiveElement();
 
   Object.values(screens).forEach(s => s.classList.remove('active'));
+  document.getElementById('mp-gameover-screen').classList.remove('active');
   hud.classList.remove('visible');
   document.getElementById('mp-hud').classList.add('visible');
 
@@ -932,7 +1074,13 @@ function enterMultiplayer() {
   mpProbeRadius = getEffectiveRadius(activeSkin, CFG.probeRadius);
   mpMaxHealth = getEffectiveMaxHealth(activeSkin, CFG.maxHealth);
   mpHealth = mpMaxHealth;
+  mpAlive = true;
+  mpSurvivalTime = 0;
+  mpWave = 1;
+  mpReviveProgress = 0;
+  mpSelfReviveRemainingMs = 0;
   updateMpHealthUI();
+  updateMpWaveUI();
 
   mpProbe = { x: canvas.width / 2, y: canvas.height / 2 };
   mpRoomId = '';
@@ -956,12 +1104,21 @@ function enterMultiplayer() {
       mpSelfId = payload.selfId;
       mpWorldWidth = payload.worldWidth;
       mpWorldHeight = payload.worldHeight;
+      applyMpWave(payload.wave);
       payload.players.forEach(p => {
         if (p.id === mpSelfId) {
-          applyMpSelfHealth(p.health);
           mpMaxHealth = p.maxHealth;
+          applyMpSelfStatus(p);
         } else {
-          mpRemote.set(p.id, { x: p.x, y: p.y, targetX: p.x, targetY: p.y, skinId: p.skinId });
+          mpRemote.set(p.id, {
+            x: p.x,
+            y: p.y,
+            targetX: p.x,
+            targetY: p.y,
+            skinId: p.skinId,
+            alive: p.alive,
+            reviveProgress: p.reviveProgress || 0,
+          });
         }
       });
       payload.enemies.forEach(e => {
@@ -982,12 +1139,13 @@ function enterMultiplayer() {
     },
   );
 
-  mpClient.onState((players, enemies) => {
+  mpClient.onState((players, enemies, wave) => {
+    applyMpWave(wave);
     const seenPlayers = new Set();
     players.forEach(p => {
       if (p.id === mpSelfId) {
-        applyMpSelfHealth(p.health);
         mpMaxHealth = p.maxHealth;
+        applyMpSelfStatus(p);
         return;
       }
       seenPlayers.add(p.id);
@@ -995,8 +1153,18 @@ function enterMultiplayer() {
       if (existing) {
         existing.targetX = p.x;
         existing.targetY = p.y;
+        existing.alive = p.alive;
+        existing.reviveProgress = p.reviveProgress || 0;
       } else {
-        mpRemote.set(p.id, { x: p.x, y: p.y, targetX: p.x, targetY: p.y, skinId: p.skinId });
+        mpRemote.set(p.id, {
+          x: p.x,
+          y: p.y,
+          targetX: p.x,
+          targetY: p.y,
+          skinId: p.skinId,
+          alive: p.alive,
+          reviveProgress: p.reviveProgress || 0,
+        });
       }
     });
     // Reconcile against the full snapshot too, as a safety net alongside mp:playerLeft.
@@ -1042,28 +1210,45 @@ function exitMultiplayer() {
   mpRoomId = '';
   mpSelfId = '';
   mpConnectError = '';
+  mpAlive = true;
   particles = [];
   document.getElementById('mp-hud').classList.remove('visible');
+  document.getElementById('mp-gameover-screen').classList.remove('active');
   state = 'menu';
   showScreen('menu');
 }
 
 function updateMultiplayer(dt, now) {
-  let ax = 0, ay = 0;
-  if (keys['KeyW'] || keys['ArrowUp'])    ay -= 1;
-  if (keys['KeyS'] || keys['ArrowDown'])  ay += 1;
-  if (keys['KeyA'] || keys['ArrowLeft'])  ax -= 1;
-  if (keys['KeyD'] || keys['ArrowRight']) ax += 1;
+  // A downed player sends no input and stays put — a teammate has to reach
+  // THEM — but still watches the world (enemies, teammates) keep moving,
+  // via the lerp below, which runs regardless of mpAlive.
+  if (mpAlive) {
+    mpSurvivalTime += dt;
 
-  const mag = Math.hypot(ax, ay);
-  if (mag > 0) { ax /= mag; ay /= mag; }
+    let ax = 0, ay = 0;
+    if (keys['KeyW'] || keys['ArrowUp'])    ay -= 1;
+    if (keys['KeyS'] || keys['ArrowDown'])  ay += 1;
+    if (keys['KeyA'] || keys['ArrowLeft'])  ax -= 1;
+    if (keys['KeyD'] || keys['ArrowRight']) ax += 1;
 
-  mpProbe.x = clamp(mpProbe.x + ax * CFG.probeSpeed * dt, mpProbeRadius, canvas.width - mpProbeRadius);
-  mpProbe.y = clamp(mpProbe.y + ay * CFG.probeSpeed * dt, mpProbeRadius, canvas.height - mpProbeRadius);
+    const touchMove = touchControls.getMoveVector();
+    ax += touchMove.x;
+    ay += touchMove.y;
 
-  const worldX = (mpProbe.x / canvas.width) * mpWorldWidth;
-  const worldY = (mpProbe.y / canvas.height) * mpWorldHeight;
-  mpClient.sendPosition(worldX, worldY, now);
+    const mag = Math.hypot(ax, ay);
+    if (mag > 0) {
+      const clampedMag = Math.min(mag, 1);
+      ax = (ax / mag) * clampedMag;
+      ay = (ay / mag) * clampedMag;
+    }
+
+    mpProbe.x = clamp(mpProbe.x + ax * CFG.probeSpeed * dt, mpProbeRadius, canvas.width - mpProbeRadius);
+    mpProbe.y = clamp(mpProbe.y + ay * CFG.probeSpeed * dt, mpProbeRadius, canvas.height - mpProbeRadius);
+
+    const worldX = (mpProbe.x / canvas.width) * mpWorldWidth;
+    const worldY = (mpProbe.y / canvas.height) * mpWorldHeight;
+    mpClient.sendPosition(worldX, worldY, now);
+  }
 
   // Simple lerp toward the latest server-reported position, so 20 ticks/sec
   // doesn't read as choppy motion for remote players/enemies.
@@ -1097,14 +1282,43 @@ function drawMultiplayer() {
   });
 
   // Same probe skin system as single-player — remote players render with
-  // whichever skin they picked, not a generic dot.
+  // whichever skin they picked, not a generic dot. Downed players stay
+  // visible as a dimmed wreck (not a full glyph) — teammates need to see
+  // exactly where to swim to revive them.
   mpRemote.forEach(p => {
     const skin = findSkinById(p.skinId);
     const r = getEffectiveRadius(skin, CFG.probeRadius) * scale;
-    renderProbeGlyph(ctx, worldToLocalX(p.x), worldToLocalY(p.y), r, skin);
+    if (p.alive) {
+      renderProbeGlyph(ctx, worldToLocalX(p.x), worldToLocalY(p.y), r, skin);
+    } else {
+      renderMpWreck(worldToLocalX(p.x), worldToLocalY(p.y), r, skin, p.reviveProgress || 0);
+    }
   });
 
-  renderProbeGlyph(ctx, mpProbe.x, mpProbe.y, mpProbeRadius, activeSkin);
+  if (mpAlive) {
+    renderProbeGlyph(ctx, mpProbe.x, mpProbe.y, mpProbeRadius, activeSkin);
+  } else {
+    renderMpWreck(mpProbe.x, mpProbe.y, mpProbeRadius, activeSkin, mpReviveProgress);
+  }
+}
+
+/** A downed player's probe, dimmed, plus a glowing progress ring once a teammate is close enough to be reviving them. */
+function renderMpWreck(x, y, r, skin, reviveProgress) {
+  ctx.save();
+  ctx.globalAlpha = 0.35;
+  renderProbeGlyph(ctx, x, y, r, skin);
+  ctx.restore();
+
+  if (reviveProgress > 0) {
+    ctx.beginPath();
+    ctx.arc(x, y, r + 10, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * reviveProgress);
+    ctx.strokeStyle = C.pulse;
+    ctx.lineWidth = 3;
+    ctx.shadowColor = C.pulse;
+    ctx.shadowBlur = 12;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
 }
 
 // ── Button Handlers ───────────────────────────────────
@@ -1126,6 +1340,16 @@ document.getElementById('btn-lb-back').addEventListener('click', () => {
   showScreen('menu');
 });
 
+document.getElementById('btn-mp-lb').addEventListener('click', async () => {
+  showScreen('mpLb');
+  const scores = await fetchMpLeaderboard();
+  renderMpLeaderboard(scores);
+});
+
+document.getElementById('btn-mp-lb-back').addEventListener('click', () => {
+  showScreen('menu');
+});
+
 document.getElementById('btn-skins').addEventListener('click', () => {
   showScreen('skins');
   renderSkinsScreen();
@@ -1140,6 +1364,14 @@ document.getElementById('btn-mp').addEventListener('click', () => {
 });
 
 document.getElementById('btn-mp-leave').addEventListener('click', () => {
+  exitMultiplayer();
+});
+
+document.getElementById('btn-mp-revive').addEventListener('click', () => {
+  reviveMultiplayer();
+});
+
+document.getElementById('btn-mp-gameover-leave').addEventListener('click', () => {
   exitMultiplayer();
 });
 

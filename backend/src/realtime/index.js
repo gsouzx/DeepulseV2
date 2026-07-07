@@ -5,14 +5,19 @@ const {
   WORLD_HEIGHT,
   joinRoom,
   updatePosition,
+  respawnPlayer,
+  updateRevives,
   leaveRoom,
   getRoomPlayers,
   getRoomEnemies,
+  getRoomWave,
   getActiveRoomIds,
   maybeSpawnEnemy,
   stepEnemies,
   applyCollisions,
+  checkWaveComplete,
 } = require('./rooms');
+const { saveMpRoomScore } = require('../models/MpRoomScore');
 
 const TICK_RATE_MS = 50; // 20 ticks/sec
 const TICK_RATE_SECONDS = TICK_RATE_MS / 1000;
@@ -28,12 +33,13 @@ function attachRealtime(httpServer, { allowedOrigins }) {
 
   io.on('connection', socket => {
     socket.on('mp:join', payload => {
-      const { roomId, players, enemies } = joinRoom(socket.id, payload?.skinId, payload?.maxHealth, payload?.radius);
+      const { roomId, wave, players, enemies } = joinRoom(socket.id, payload?.skinId, payload?.maxHealth, payload?.radius);
       socket.data.roomId = roomId;
       socket.join(roomId);
       socket.emit('mp:joined', {
         roomId,
         selfId: socket.id,
+        wave,
         players,
         enemies,
         maxPlayers: MAX_PLAYERS_PER_ROOM,
@@ -46,11 +52,19 @@ function attachRealtime(httpServer, { allowedOrigins }) {
       updatePosition(socket.id, payload?.x, payload?.y);
     });
 
+    socket.on('mp:respawn', () => {
+      respawnPlayer(socket.id);
+    });
+
     socket.on('disconnect', () => {
-      const roomId = leaveRoom(socket.id);
-      if (roomId) {
-        io.to(roomId).emit('mp:playerLeft', { id: socket.id });
-      }
+      const result = leaveRoom(socket.id);
+      if (!result) return;
+      const { roomId, closedRoomResult } = result;
+      io.to(roomId).emit('mp:playerLeft', { id: socket.id });
+      // Room's last player just left — hand its final result to the
+      // mp-leaderboard. Automatic, no client action needed (no nickname
+      // system yet to attribute the run to a person anyway).
+      if (closedRoomResult) saveMpRoomScore(closedRoomResult);
     });
   });
 
@@ -60,7 +74,13 @@ function attachRealtime(httpServer, { allowedOrigins }) {
       maybeSpawnEnemy(roomId, now);
       stepEnemies(roomId, TICK_RATE_SECONDS);
       applyCollisions(roomId);
-      io.to(roomId).emit('mp:state', { players: getRoomPlayers(roomId), enemies: getRoomEnemies(roomId) });
+      updateRevives(roomId, TICK_RATE_MS);
+      checkWaveComplete(roomId);
+      io.to(roomId).emit('mp:state', {
+        players: getRoomPlayers(roomId),
+        enemies: getRoomEnemies(roomId),
+        wave: getRoomWave(roomId),
+      });
     }
   }, TICK_RATE_MS);
 

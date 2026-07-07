@@ -6,6 +6,7 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const leaderboardRoutes = require('./routes/leaderboard');
 const statsRoutes = require('./routes/stats');
+const mpLeaderboardRoutes = require('./routes/mpLeaderboard');
 const { attachRealtime } = require('./realtime');
 
 const app = express();
@@ -35,6 +36,7 @@ app.use('/api', limiter);
 // Routes
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/stats', statsRoutes);
+app.use('/api/mp-leaderboard', mpLeaderboardRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

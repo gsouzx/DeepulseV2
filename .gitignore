@@ -1,6 +1,7 @@
 node_modules/
 backend/config/scores.json
 backend/config/stats.json
+backend/config/mp-scores.json
 .env
 .DS_Store
 Thumbs.db

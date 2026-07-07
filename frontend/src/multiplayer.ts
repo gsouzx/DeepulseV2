@@ -11,6 +11,11 @@ export interface RemotePlayer {
   skinId: string;
   health: number;
   maxHealth: number;
+  alive: boolean;
+  /** 0..1 — how close a nearby teammate is to fully reviving this player (0 when alive or nobody's helping). */
+  reviveProgress: number;
+  /** How much longer this player must wait before the self-service "Reviver" button works (0 when alive or the cooldown has elapsed). */
+  selfReviveRemainingMs: number;
 }
 
 export interface RemoteEnemy {
@@ -23,6 +28,8 @@ export interface RemoteEnemy {
 export interface JoinedPayload {
   roomId: string;
   selfId: string;
+  /** The room's current shared wave — may be > 1 when joining a session already in progress. */
+  wave: number;
   players: RemotePlayer[];
   enemies: RemoteEnemy[];
   maxPlayers: number;
@@ -68,9 +75,9 @@ export class MultiplayerClient {
     socket.on('connect_error', err => onError?.(err.message));
   }
 
-  onState(callback: (players: RemotePlayer[], enemies: RemoteEnemy[]) => void): void {
-    this.socket?.on('mp:state', (payload: { players: RemotePlayer[]; enemies: RemoteEnemy[] }) =>
-      callback(payload.players, payload.enemies),
+  onState(callback: (players: RemotePlayer[], enemies: RemoteEnemy[], wave: number) => void): void {
+    this.socket?.on('mp:state', (payload: { players: RemotePlayer[]; enemies: RemoteEnemy[]; wave: number }) =>
+      callback(payload.players, payload.enemies, payload.wave),
     );
   }
 
@@ -87,6 +94,11 @@ export class MultiplayerClient {
     if (!this.socket || !shouldSendPosition(this.lastSentAt, now, this.minSendIntervalMs)) return;
     this.lastSentAt = now;
     this.socket.emit('mp:move', { x, y });
+  }
+
+  /** Brings this player back into the room at full health — the death screen's "Reviver" button. */
+  respawn(): void {
+    this.socket?.emit('mp:respawn');
   }
 
   get selfId(): string | undefined {
