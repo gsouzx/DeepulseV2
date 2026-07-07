@@ -1,6 +1,8 @@
 import { io, Socket } from 'socket.io-client';
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3001';
+const PRODUCTION_SOCKET_URL = 'https://deepulsev2-production.up.railway.app';
+const SOCKET_URL =
+  import.meta.env.VITE_SOCKET_URL || (import.meta.env.DEV ? 'http://localhost:3001' : PRODUCTION_SOCKET_URL);
 
 export interface RemotePlayer {
   id: string;

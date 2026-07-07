@@ -10,13 +10,15 @@ const { attachRealtime } = require('./realtime');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:5500,http://127.0.0.1:5500')
-  .split(',')
-  .map(origin => origin.trim());
+// TODO: restrict this to the real Vercel domain once it's live — '*' is a
+// temporary placeholder while the frontend URL isn't final yet.
+const rawAllowedOrigins = process.env.ALLOWED_ORIGINS || '*';
+const ALLOWED_ORIGINS =
+  rawAllowedOrigins.trim() === '*' ? '*' : rawAllowedOrigins.split(',').map(origin => origin.trim());
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:5500', 'http://127.0.0.1:5500', 'http://localhost:3000', '*'],
+  origin: ALLOWED_ORIGINS,
   methods: ['GET', 'POST'],
 }));
 

@@ -30,7 +30,7 @@ import { MultiplayerClient } from './multiplayer';
 import { ENEMY_TYPES, findEnemyType } from './entities/enemy-types';
 import { glow, noGlow } from './rendering/glow';
 
-const API_BASE = 'http://localhost:3001/api';
+const API_BASE = `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api`;
 
 // ── Canvas Setup ──────────────────────────────────────
 const canvas = document.getElementById('gameCanvas');
