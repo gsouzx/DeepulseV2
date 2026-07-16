@@ -17,6 +17,9 @@ const {
   stepEnemies,
   applyCollisions,
   checkWaveComplete,
+  maintainBotPopulation,
+  stepBots,
+  updateBotScores,
 } = require('./rooms');
 const { saveMpRoomScore } = require('../models/MpRoomScore');
 
@@ -72,9 +75,8 @@ function attachRealtime(httpServer, { allowedOrigins }) {
       if (!result) return;
       const { roomId, closedRoomResult } = result;
       io.to(roomId).emit('mp:playerLeft', { id: socket.id });
-      // Room's last player just left — hand its final result to the
-      // mp-leaderboard. Automatic, no client action needed (no nickname
-      // system yet to attribute the run to a person anyway).
+      // Room's last REAL player just left (bots alone don't keep a room
+      // open — see leaveRoom()) — hand its final result to the mp-leaderboard.
       if (closedRoomResult) saveMpRoomScore(closedRoomResult);
     });
   });
@@ -82,10 +84,16 @@ function attachRealtime(httpServer, { allowedOrigins }) {
   setInterval(() => {
     const now = Date.now();
     for (const roomId of getActiveRoomIds()) {
+      stepBots(roomId, TICK_RATE_SECONDS);
       maybeSpawnEnemy(roomId, now);
       stepEnemies(roomId, TICK_RATE_SECONDS);
       applyCollisions(roomId);
+      // Removes any bot that just died (before updateRevives runs, so a
+      // freshly-dead bot is never mistaken for a rescuable teammate) and
+      // tops the room back up to its target bot count.
+      maintainBotPopulation(roomId, now);
       updateRevives(roomId, TICK_RATE_MS);
+      updateBotScores(roomId);
       checkWaveComplete(roomId);
       io.to(roomId).emit('mp:state', {
         players: getRoomPlayers(roomId),

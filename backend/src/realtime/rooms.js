@@ -17,7 +17,15 @@
 // there's no shared package between the Node backend and the Vite
 // frontend to enforce it automatically.
 
+// MAX_PLAYERS_PER_ROOM gates REAL players only (matchmaking cap — a 7th
+// real player starts a fresh room rather than ever being blocked by bot
+// occupancy). MAX_TOTAL_OCCUPANTS_PER_ROOM is the hard ceiling on
+// reals+bots combined; bots only get force-evicted on a real player's join
+// in the rare case total occupancy would otherwise exceed it — day to day,
+// bot count instead drifts down on its own as they die and a shrinking
+// target (see targetBotCount()) means fewer get replaced.
 const MAX_PLAYERS_PER_ROOM = 6;
+const MAX_TOTAL_OCCUPANTS_PER_ROOM = 8;
 const WORLD_WIDTH = 1280;
 const WORLD_HEIGHT = 720;
 
@@ -88,6 +96,182 @@ function resolveNickname(raw) {
   return sanitizeNickname(raw) || generateFallbackNickname();
 }
 
+// ── Bots ──────────────────────────────────────────────────────────────────
+// Ambient background presence so a room never reads as dead-empty. Bots are
+// ordinary entries in room.players (same shape, same collision/wave/revive
+// code paths) with isBot: true tacked on — that flag is never sent to
+// clients (see getRoomPlayers()), so nametag/ranking rendering needs zero
+// bot-awareness on the frontend; a bot is just a "player" that happens to
+// move itself instead of reporting mp:move.
+const MAX_BOTS_PER_ROOM = 6; // ceiling when real players are scarce — matches BOT_NAMES.length
+const MIN_BOTS_PER_ROOM = 2; // steady-state floor once the room has real players (transient dips to fewer during a respawn delay are expected)
+const BOT_TAPER_PER_REAL_PLAYER = 1; // each real player present tapers the bot target down by this much
+const BOT_RESPAWN_DELAY_MIN_MS = 5000;
+const BOT_RESPAWN_DELAY_MAX_MS = 10000;
+// Deliberately slower than the fastest enemy (angler, 104) — a bot outruns
+// jellyfish (80) and leviathan (56) most of the time, but an angler chasing
+// it in a straight line eventually catches up. Nowhere near the real
+// player's 220: bots are meant to occasionally get caught and "die
+// normally", not evade forever like a perfect getaway.
+const BOT_SPEED = 90;
+const BOT_WANDER_TURN_RATE = 1.5; // max radians/sec the wander heading drifts by
+const BOT_FLEE_RADIUS = 160; // world-space units — an enemy this close overrides wandering with fleeing
+const BOT_FLEE_ANGLE_JITTER = 0.6; // radians of randomness on the flee heading — imperfect panic, not a laser-precise escape vector
+const BOT_SCORE_TICK_CHANCE = 0.02; // per server tick (20/sec) — averages out to roughly once every 2.5s
+const BOT_SCORE_TICK_MIN = 1;
+const BOT_SCORE_TICK_MAX = 4;
+// Conservative fixed ceiling rather than a true "historical real-player average" (that would need
+// cross-session score analytics this project doesn't have anywhere yet) — comfortably below what an
+// actively-fighting real player earns from even a single real kill (100-500 points per enemy type).
+const BOT_MAX_SCORE = 150;
+const BOT_NAMES = ['Xandaaão', 'Calderano10', 'Master', '100CHORO', 'Zé da Silva PRO', 'Mó Treta'];
+
+function countRealPlayers(room) {
+  let count = 0;
+  for (const p of room.players.values()) {
+    if (!p.isBot) count++;
+  }
+  return count;
+}
+
+function countBots(room) {
+  let count = 0;
+  for (const p of room.players.values()) {
+    if (p.isBot) count++;
+  }
+  return count;
+}
+
+/** Finds any bot in the room and returns its id, or null — used to evict one when a real player needs the slot. */
+function firstBotId(room) {
+  for (const [id, p] of room.players) {
+    if (p.isBot) return id;
+  }
+  return null;
+}
+
+/** How many bots this room should have right now, given how many real players are in it. Tapers from MAX down to MIN as real players join; never negative. */
+function targetBotCount(room) {
+  const real = countRealPlayers(room);
+  return Math.max(MIN_BOTS_PER_ROOM, MAX_BOTS_PER_ROOM - BOT_TAPER_PER_REAL_PLAYER * real);
+}
+
+/** Prefers a name not already worn by another bot in the room, so two bots never look identical at a glance. */
+function pickBotName(room) {
+  const inUse = new Set();
+  for (const p of room.players.values()) {
+    if (p.isBot) inUse.add(p.nickname);
+  }
+  const available = BOT_NAMES.filter(name => !inUse.has(name));
+  const pool = available.length > 0 ? available : BOT_NAMES;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function spawnBot(room) {
+  const id = `bot-${room.nextBotId++}`;
+  room.players.set(id, {
+    x: WORLD_WIDTH * (0.2 + Math.random() * 0.6),
+    y: WORLD_HEIGHT * (0.2 + Math.random() * 0.6),
+    skinId: DEFAULT_SKIN_ID,
+    nickname: pickBotName(room),
+    health: DEFAULT_MAX_HEALTH,
+    maxHealth: DEFAULT_MAX_HEALTH,
+    radius: DEFAULT_PLAYER_RADIUS,
+    alive: true,
+    diedAt: null,
+    reviveProgressMs: 0,
+    score: Math.floor(Math.random() * 30),
+    shieldUntil: 0,
+    isBot: true,
+    wanderAngle: Math.random() * Math.PI * 2,
+    updatedAt: Date.now(),
+  });
+  // Deliberately NOT touching room.peakPlayers here — that stat feeds the
+  // mp-leaderboard's "peak players" figure and should reflect real turnout.
+}
+
+/**
+ * Bots don't sit around as a revivable wreck like a downed real player —
+ * they vanish the tick they die (removed here, before updateRevives() runs,
+ * so a freshly-dead bot is never mistaken for something a real teammate can
+ * rescue) and a replacement (possibly a different name) reenters after a
+ * random 5-10s delay, as long as the room is still under its bot target and
+ * has a free slot. Real players always win any contested slot — see
+ * findRoomWithSpace() for the eviction side of that rule.
+ */
+function maintainBotPopulation(roomId, now) {
+  const room = rooms.get(roomId);
+  if (!room) return;
+
+  let botDied = false;
+  for (const [id, p] of room.players) {
+    if (p.isBot && !p.alive) {
+      room.players.delete(id);
+      botDied = true;
+    }
+  }
+
+  if (botDied) {
+    room.nextBotSpawnAllowedAt =
+      now + BOT_RESPAWN_DELAY_MIN_MS + Math.random() * (BOT_RESPAWN_DELAY_MAX_MS - BOT_RESPAWN_DELAY_MIN_MS);
+    return;
+  }
+
+  if (countBots(room) >= targetBotCount(room)) return;
+  if (room.players.size >= MAX_TOTAL_OCCUPANTS_PER_ROOM) return; // at the absolute ceiling — no free slot to spawn into
+  if (room.nextBotSpawnAllowedAt && now < room.nextBotSpawnAllowedAt) return;
+
+  spawnBot(room);
+}
+
+/** Smooth random wander, overridden by fleeing the nearest enemy once it's close — simple enough to not need to be "good", just present. */
+function stepBots(roomId, dtSeconds) {
+  const room = rooms.get(roomId);
+  if (!room) return;
+  const enemies = Array.from(room.enemies.values());
+
+  room.players.forEach(bot => {
+    if (!bot.isBot || !bot.alive) return;
+
+    bot.wanderAngle += (Math.random() - 0.5) * BOT_WANDER_TURN_RATE * dtSeconds;
+    let dx = Math.cos(bot.wanderAngle);
+    let dy = Math.sin(bot.wanderAngle);
+
+    let nearestDist = Infinity;
+    let nearestEnemy = null;
+    for (const enemy of enemies) {
+      const d = Math.hypot(enemy.x - bot.x, enemy.y - bot.y);
+      if (d < nearestDist) {
+        nearestDist = d;
+        nearestEnemy = enemy;
+      }
+    }
+    if (nearestEnemy && nearestDist < BOT_FLEE_RADIUS) {
+      const awayAngle =
+        Math.atan2(bot.y - nearestEnemy.y, bot.x - nearestEnemy.x) + (Math.random() - 0.5) * BOT_FLEE_ANGLE_JITTER;
+      dx = Math.cos(awayAngle);
+      dy = Math.sin(awayAngle);
+      bot.wanderAngle = awayAngle; // resume wandering from this heading instead of snapping back next tick
+    }
+
+    bot.x = Math.min(WORLD_WIDTH - bot.radius, Math.max(bot.radius, bot.x + dx * BOT_SPEED * dtSeconds));
+    bot.y = Math.min(WORLD_HEIGHT - bot.radius, Math.max(bot.radius, bot.y + dy * BOT_SPEED * dtSeconds));
+    bot.updatedAt = Date.now();
+  });
+}
+
+/** Small random score trickle for alive bots, capped well below what a real player earns from actual kills — see BOT_MAX_SCORE. */
+function updateBotScores(roomId) {
+  const room = rooms.get(roomId);
+  if (!room) return;
+  room.players.forEach(bot => {
+    if (!bot.isBot || !bot.alive || bot.score >= BOT_MAX_SCORE) return;
+    if (Math.random() >= BOT_SCORE_TICK_CHANCE) return;
+    const gain = BOT_SCORE_TICK_MIN + Math.floor(Math.random() * (BOT_SCORE_TICK_MAX - BOT_SCORE_TICK_MIN + 1));
+    bot.score = Math.min(BOT_MAX_SCORE, bot.score + gain);
+  });
+}
+
 /**
  * @type {Map<string, {
  *   players: Map<string, { x: number, y: number, skinId: string, nickname: string, health: number, maxHealth: number, radius: number, alive: boolean, diedAt: number|null, reviveProgressMs: number, score: number, shieldUntil: number, updatedAt: number }>,
@@ -99,6 +283,8 @@ function resolveNickname(raw) {
  *   enemiesRequiredForWave: number,
  *   createdAt: number,
  *   peakPlayers: number,
+ *   nextBotId: number,
+ *   nextBotSpawnAllowedAt: number,
  * }>}
  */
 const rooms = new Map();
@@ -119,12 +305,28 @@ function createRoomState() {
     enemiesRequiredForWave: WAVE_ENEMY_BASE,
     createdAt: Date.now(),
     peakPlayers: 0,
+    nextBotId: 1,
+    nextBotSpawnAllowedAt: 0,
   };
 }
 
+/**
+ * Real players get their own dedicated capacity (MAX_PLAYERS_PER_ROOM) —
+ * bot occupancy alone never blocks one from joining an otherwise-open room.
+ * The only time a bot gets evicted here is the rare case where admitting
+ * this real player would push total occupancy (reals+bots) past the
+ * absolute ceiling; day to day, bot count instead drifts down gradually as
+ * they die and a shrinking target means fewer get replaced (see
+ * targetBotCount()), not by getting kicked out on every join.
+ */
 function findRoomWithSpace() {
   for (const [roomId, room] of rooms) {
-    if (room.players.size < MAX_PLAYERS_PER_ROOM) return roomId;
+    if (countRealPlayers(room) >= MAX_PLAYERS_PER_ROOM) continue;
+    if (room.players.size >= MAX_TOTAL_OCCUPANTS_PER_ROOM) {
+      const botId = firstBotId(room);
+      if (botId) room.players.delete(botId);
+    }
+    return roomId;
   }
   return null;
 }
@@ -259,7 +461,11 @@ function updateRevives(roomId, dtMs) {
   });
 }
 
-/** Removes the player from its room. If that empties the room, the room is deleted and its final result is returned for the mp-leaderboard. */
+/**
+ * Removes the player from its room. Closes the room once its last REAL
+ * player leaves (not just its last occupant — bots alone must never keep a
+ * room alive forever), returning its final result for the mp-leaderboard.
+ */
 function leaveRoom(playerId) {
   const roomId = playerRoom.get(playerId);
   if (!roomId) return null;
@@ -269,7 +475,7 @@ function leaveRoom(playerId) {
 
   room.players.delete(playerId);
   let closedRoomResult = null;
-  if (room.players.size === 0) {
+  if (countRealPlayers(room) === 0) {
     closedRoomResult = {
       wave: room.wave,
       durationSeconds: Math.round((Date.now() - room.createdAt) / 1000),
@@ -301,23 +507,26 @@ function getRoomPlayers(roomId) {
   }));
 }
 
-function countAlivePlayers(room) {
+// Difficulty scaling counts REAL alive players only — bots are cosmetic
+// padding, not an excuse to swarm a solo real player with a 6-player-sized
+// difficulty just because bots are keeping the room company.
+function countAliveRealPlayers(room) {
   let count = 0;
   for (const p of room.players.values()) {
-    if (p.alive) count++;
+    if (p.alive && !p.isBot) count++;
   }
   return count;
 }
 
-/** How many enemies a room is allowed to have concurrently, scaled by how many players are alive right now. */
+/** How many enemies a room is allowed to have concurrently, scaled by how many real players are alive right now. */
 function maxEnemiesForRoom(room) {
-  const alive = Math.max(1, countAlivePlayers(room));
+  const alive = Math.max(1, countAliveRealPlayers(room));
   return Math.min(MAX_ENEMIES_CAP, BASE_MAX_ENEMIES + (alive - 1) * EXTRA_ENEMIES_PER_PLAYER);
 }
 
-/** How long a room waits between enemy spawns, scaled by how many players are alive right now — more survivors, less breathing room. */
+/** How long a room waits between enemy spawns, scaled by how many real players are alive right now — more survivors, less breathing room. */
 function spawnIntervalForRoom(room) {
-  const alive = Math.max(1, countAlivePlayers(room));
+  const alive = Math.max(1, countAliveRealPlayers(room));
   const factor = Math.max(MIN_SPAWN_INTERVAL_FACTOR, 1 - (alive - 1) * SPAWN_SPEEDUP_PER_EXTRA_PLAYER);
   return BASE_ENEMY_SPAWN_INTERVAL_MS * factor;
 }
@@ -418,6 +627,7 @@ function applyCollisions(roomId) {
       if (player.shieldUntil > now) {
         enemy.hp = 0;
         player.score += Math.floor(spec.points * SHIELD_KILL_SCORE_FACTOR);
+        if (player.isBot) player.score = Math.min(player.score, BOT_MAX_SCORE);
         return;
       }
 
@@ -430,6 +640,7 @@ function applyCollisions(roomId) {
       }
       if (enemy.hp <= 0) {
         player.score += spec.points;
+        if (player.isBot) player.score = Math.min(player.score, BOT_MAX_SCORE);
       }
     });
   });
@@ -475,4 +686,7 @@ module.exports = {
   stepEnemies,
   applyCollisions,
   checkWaveComplete,
+  maintainBotPopulation,
+  stepBots,
+  updateBotScores,
 };
