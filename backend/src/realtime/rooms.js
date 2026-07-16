@@ -67,9 +67,30 @@ const DEFAULT_SKIN_ID = 'standard';
 const DEFAULT_MAX_HEALTH = 100;
 const DEFAULT_PLAYER_RADIUS = 14;
 
+// ── Nickname ──────────────────────────────────────────────────────────────
+// Mirrors frontend/src/nickname.ts exactly (letters incl. accents, digits,
+// space, hyphen, underscore; 12 chars max) — never trust the client-side
+// sanitization alone, a hand-crafted socket payload can send anything.
+const MAX_NICKNAME_LENGTH = 12;
+const INVALID_NICKNAME_CHARS_REGEX = /[^\p{L}\p{N} _-]/gu;
+
+function sanitizeNickname(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw.replace(INVALID_NICKNAME_CHARS_REGEX, '').trim().slice(0, MAX_NICKNAME_LENGTH);
+}
+
+function generateFallbackNickname() {
+  const digits = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  return `Piloto ${digits}`;
+}
+
+function resolveNickname(raw) {
+  return sanitizeNickname(raw) || generateFallbackNickname();
+}
+
 /**
  * @type {Map<string, {
- *   players: Map<string, { x: number, y: number, skinId: string, health: number, maxHealth: number, radius: number, alive: boolean, diedAt: number|null, reviveProgressMs: number, score: number, shieldUntil: number, updatedAt: number }>,
+ *   players: Map<string, { x: number, y: number, skinId: string, nickname: string, health: number, maxHealth: number, radius: number, alive: boolean, diedAt: number|null, reviveProgressMs: number, score: number, shieldUntil: number, updatedAt: number }>,
  *   enemies: Map<string, { id: string, type: string, x: number, y: number, hp: number, speed: number }>,
  *   nextEnemyId: number,
  *   lastEnemySpawnAt: number,
@@ -135,7 +156,7 @@ function sanitizePositiveNumber(value, fallback) {
  * room id, its current wave, and its roster + enemies (including the
  * player that just joined).
  */
-function joinRoom(playerId, skinId, maxHealth, radius) {
+function joinRoom(playerId, skinId, maxHealth, radius, nickname) {
   const roomId = findRoomWithSpace() ?? createRoom();
   const room = rooms.get(roomId);
   const effectiveMaxHealth = sanitizePositiveNumber(maxHealth, DEFAULT_MAX_HEALTH);
@@ -143,6 +164,7 @@ function joinRoom(playerId, skinId, maxHealth, radius) {
     x: WORLD_WIDTH / 2,
     y: WORLD_HEIGHT / 2,
     skinId: sanitizeSkinId(skinId),
+    nickname: resolveNickname(nickname),
     health: effectiveMaxHealth,
     maxHealth: effectiveMaxHealth,
     radius: sanitizePositiveNumber(radius, DEFAULT_PLAYER_RADIUS),
@@ -266,6 +288,7 @@ function getRoomPlayers(roomId) {
     x: p.x,
     y: p.y,
     skinId: p.skinId,
+    nickname: p.nickname,
     health: p.health,
     maxHealth: p.maxHealth,
     alive: p.alive,

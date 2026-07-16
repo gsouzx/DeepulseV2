@@ -34,7 +34,13 @@ function attachRealtime(httpServer, { allowedOrigins }) {
 
   io.on('connection', socket => {
     socket.on('mp:join', payload => {
-      const { roomId, wave, players, enemies } = joinRoom(socket.id, payload?.skinId, payload?.maxHealth, payload?.radius);
+      const { roomId, wave, players, enemies } = joinRoom(
+        socket.id,
+        payload?.skinId,
+        payload?.maxHealth,
+        payload?.radius,
+        payload?.nickname,
+      );
       socket.data.roomId = roomId;
       socket.join(roomId);
       socket.emit('mp:joined', {

@@ -9,6 +9,7 @@ export interface RemotePlayer {
   x: number;
   y: number;
   skinId: string;
+  nickname: string;
   health: number;
   maxHealth: number;
   alive: boolean;
@@ -48,7 +49,8 @@ export function shouldSendPosition(lastSentAt: number, now: number, minIntervalM
 
 /**
  * Thin wrapper around the socket.io-client connection for the multiplayer
- * test mode (step 1: networking infra only — no nickname, no anti-cheat).
+ * test mode (step 1: networking infra only — no anti-cheat beyond the
+ * server re-sanitizing whatever the client claims, e.g. the nickname).
  * Connects lazily: only used once the player opts into "Multiplayer (teste)",
  * so single-player has zero socket overhead.
  */
@@ -61,6 +63,7 @@ export class MultiplayerClient {
     skinId: string,
     maxHealth: number,
     radius: number,
+    nickname: string,
     onJoined: (payload: JoinedPayload) => void,
     onError?: (message: string) => void,
   ): void {
@@ -71,7 +74,7 @@ export class MultiplayerClient {
 
     const socket = io(SOCKET_URL, { transports: ['websocket', 'polling'] });
     this.socket = socket;
-    socket.on('connect', () => socket.emit('mp:join', { skinId, maxHealth, radius }));
+    socket.on('connect', () => socket.emit('mp:join', { skinId, maxHealth, radius, nickname }));
     socket.on('mp:joined', onJoined);
     // Without this, a backend that isn't running just hangs the UI on
     // "Conectando..." forever with no visible signal of what's wrong.

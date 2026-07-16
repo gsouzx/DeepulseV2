@@ -28,6 +28,7 @@ import {
 } from './skins';
 import { MultiplayerClient } from './multiplayer';
 import { TouchControls } from './touch-controls';
+import { stripInvalidNicknameChars, resolveNickname, getSavedNickname, saveNickname } from './nickname';
 import { ENEMY_TYPES, findEnemyType } from './entities/enemy-types';
 import { glow, noGlow } from './rendering/glow';
 
@@ -144,6 +145,18 @@ const touchControls = new TouchControls();
 touchControls.onAction(() => {
   if (state === 'playing') activateShield();
   else if (state === 'mp') activateMpShield();
+});
+
+// Multiplayer nickname field — pre-filled from last time, sanitized live as
+// typed (invalid characters stripped, but NOT trimmed here: trimming mid-word
+// would eat a space the player is about to type past). Trim + the empty ->
+// fallback-tag decision happen once, at join time — see enterMultiplayer().
+const mpNicknameInput = document.getElementById('mp-nickname-input');
+mpNicknameInput.value = getSavedNickname();
+mpNicknameInput.addEventListener('input', () => {
+  const sanitized = stripInvalidNicknameChars(mpNicknameInput.value);
+  if (sanitized !== mpNicknameInput.value) mpNicknameInput.value = sanitized;
+  saveNickname(sanitized);
 });
 
 // ── Screen Manager ────────────────────────────────────
@@ -345,6 +358,38 @@ function drawShieldRing(targetCtx, x, y, r) {
   glow(targetCtx, C.energy, 20);
   targetCtx.stroke();
   noGlow(targetCtx);
+}
+
+const NICKNAME_MAX_WIDTH_PX = 90;
+
+/**
+ * Multiplayer-only nametag — small text centered above a probe/wreck,
+ * following it every frame. Canvas has no native text-ellipsis, so long
+ * names (already capped at 12 chars server-side) are truncated by
+ * measurement as a second line of defense. `opacity` lets the local
+ * player's own tag render more discreetly than everyone else's — see the
+ * call site in drawMultiplayer() for why.
+ */
+function drawNickname(targetCtx, x, y, r, text, opacity = 1) {
+  if (!text) return;
+  targetCtx.save();
+  targetCtx.globalAlpha = opacity;
+  targetCtx.font = `10px 'Share Tech Mono', monospace`;
+  targetCtx.textAlign = 'center';
+  targetCtx.textBaseline = 'alphabetic';
+  targetCtx.shadowColor = 'rgba(0,0,0,0.9)';
+  targetCtx.shadowBlur = 4;
+  targetCtx.fillStyle = 'rgba(220,245,255,0.95)';
+
+  let display = text;
+  if (targetCtx.measureText(display).width > NICKNAME_MAX_WIDTH_PX) {
+    while (display.length > 1 && targetCtx.measureText(display + '…').width > NICKNAME_MAX_WIDTH_PX) {
+      display = display.slice(0, -1);
+    }
+    display += '…';
+  }
+  targetCtx.fillText(display, x, y - r - 8);
+  targetCtx.restore();
 }
 
 function drawProbe() {
@@ -967,6 +1012,7 @@ let mpShields = CFG.maxShields;
 let mpShieldActive = false;
 let mpShieldTimer = 0;
 let mpShieldCooldown = 0;
+let mpNickname = '';
 
 function updateMpRoomInfo() {
   const el = document.getElementById('mp-room-info');
@@ -995,12 +1041,15 @@ function renderMpRanking() {
   const roster = [];
   if (mpAlive) roster.push({ id: mpSelfId, score: mpScore, self: true });
   mpRemote.forEach((p, id) => {
-    if (p.alive) roster.push({ id, score: p.score || 0, self: false });
+    if (p.alive) roster.push({ id, score: p.score || 0, nickname: p.nickname, self: false });
   });
   roster.sort((a, b) => b.score - a.score);
 
   container.innerHTML = roster.slice(0, 5).map((p, i) => {
-    const label = p.self ? 'Você' : `Piloto ${p.id.slice(0, 4).toUpperCase()}`;
+    // The local player is always labeled "Você" rather than their own typed
+    // nickname — instant self-recognition beats matching your own name in a
+    // list, and it's consistent with how the rest of the mp HUD refers to you.
+    const label = p.self ? 'Você' : p.nickname || 'Piloto';
     return `<div class="mp-ranking-row${p.self ? ' mp-ranking-self' : ''}">` +
       `<span class="mp-ranking-name"><span class="mp-ranking-rank">${i + 1}.</span>${label}</span>` +
       `<span class="mp-ranking-score">${Math.floor(p.score).toLocaleString()}</span>` +
@@ -1193,6 +1242,14 @@ function enterMultiplayer() {
   particles = [];
   updateMpRoomInfo();
 
+  // Resolved once per join: sanitized input, or a fresh "Piloto ####" tag if
+  // it sanitizes to empty — never blocks entering the room. Written back to
+  // the field/localStorage so a fallback tag becomes this player's saved
+  // identity too, and so the field reflects whatever actually got used.
+  mpNickname = resolveNickname(mpNicknameInput.value);
+  mpNicknameInput.value = mpNickname;
+  saveNickname(mpNickname);
+
   state = 'mp';
   lastTime = performance.now();
 
@@ -1200,6 +1257,7 @@ function enterMultiplayer() {
     activeSkin.id,
     mpMaxHealth,
     mpProbeRadius,
+    mpNickname,
     payload => {
       mpConnectError = '';
       mpRoomId = payload.roomId;
@@ -1218,6 +1276,7 @@ function enterMultiplayer() {
             targetX: p.x,
             targetY: p.y,
             skinId: p.skinId,
+            nickname: p.nickname || '',
             alive: p.alive,
             score: p.score || 0,
             shieldActive: p.shieldActive || false,
@@ -1269,6 +1328,7 @@ function enterMultiplayer() {
           targetX: p.x,
           targetY: p.y,
           skinId: p.skinId,
+          nickname: p.nickname || '',
           alive: p.alive,
           score: p.score || 0,
           shieldActive: p.shieldActive || false,
@@ -1408,13 +1468,14 @@ function drawMultiplayer() {
   mpRemote.forEach(p => {
     const skin = findSkinById(p.skinId);
     const r = getEffectiveRadius(skin, CFG.probeRadius) * scale;
+    const x = worldToLocalX(p.x), y = worldToLocalY(p.y);
     if (p.alive) {
-      const x = worldToLocalX(p.x), y = worldToLocalY(p.y);
       if (p.shieldActive) drawShieldRing(ctx, x, y, r);
       renderProbeGlyph(ctx, x, y, r, skin);
     } else {
-      renderMpWreck(worldToLocalX(p.x), worldToLocalY(p.y), r, skin, p.reviveProgress || 0);
+      renderMpWreck(x, y, r, skin, p.reviveProgress || 0);
     }
+    drawNickname(ctx, x, y, r, p.nickname);
   });
 
   if (mpAlive) {
@@ -1423,6 +1484,10 @@ function drawMultiplayer() {
   } else {
     renderMpWreck(mpProbe.x, mpProbe.y, mpProbeRadius, activeSkin, mpReviveProgress);
   }
+  // Shown too, but dimmer than remote tags — mainly so this player can
+  // confirm their own nickname actually took effect (sanitization, fallback
+  // tag) rather than to identify themselves, which they obviously don't need.
+  drawNickname(ctx, mpProbe.x, mpProbe.y, mpProbeRadius, mpNickname, 0.6);
 }
 
 /** A downed player's probe, dimmed, plus a glowing progress ring once a teammate is close enough to be reviving them. */
