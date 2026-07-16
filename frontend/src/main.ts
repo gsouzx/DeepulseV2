@@ -99,9 +99,10 @@ let enemiesForWave  = CFG.waveEnemyBase;
 let activeSkin      = SKINS[0];
 
 // ── Multiplayer (test mode — networking infra + server-simulated enemies,
-// no collision/damage/nickname/scoring yet) ────────────────────────────
+// server-authoritative collision/damage/death/wave/revive/scoring; still no
+// nickname/shield system) ────────────────────────────────────────────────
 // Deliberately separate from single-player state: its own local position,
-// its own render path, no waves/scoring. See src/multiplayer.ts.
+// its own render path, own score bookkeeping. See src/multiplayer.ts.
 // Enemies and remote players are tracked in the server's fixed "world
 // space" (mpWorldWidth x mpWorldHeight); drawMultiplayer() maps that to
 // this client's own canvas size so it looks right regardless of window size.
@@ -951,6 +952,8 @@ let mpSurvivalTime = 0;
 let mpWave = 1;
 let mpReviveProgress = 0; // 0..1, from a nearby teammate reviving us
 let mpSelfReviveRemainingMs = 0;
+let mpScore = 0;
+let mpRankingLastRenderAt = 0;
 
 function updateMpRoomInfo() {
   const el = document.getElementById('mp-room-info');
@@ -964,6 +967,32 @@ function updateMpRoomInfo() {
   el.textContent = mpRoomId
     ? `Sala: ${mpRoomId} · Jogadores: ${mpRemote.size + 1} (${aliveCount} vivos) · Inimigos: ${mpEnemies.size}`
     : 'Conectando...';
+}
+
+/**
+ * Top 5 alive players in the room by score, agar.io-style — dead players
+ * drop off immediately (filtered by `alive`, not just "last known score"),
+ * and the local player's row is highlighted so they can spot themselves at
+ * a glance. Called on every join/state snapshot, but only actually
+ * re-renders every RANKING_THROTTLE_MS (see the call sites) since a 20
+ * ticks/sec DOM rebuild would be wasted work for a once-a-few-frames read.
+ */
+function renderMpRanking() {
+  const container = document.getElementById('mp-ranking');
+  const roster = [];
+  if (mpAlive) roster.push({ id: mpSelfId, score: mpScore, self: true });
+  mpRemote.forEach((p, id) => {
+    if (p.alive) roster.push({ id, score: p.score || 0, self: false });
+  });
+  roster.sort((a, b) => b.score - a.score);
+
+  container.innerHTML = roster.slice(0, 5).map((p, i) => {
+    const label = p.self ? 'Você' : `Piloto ${p.id.slice(0, 4).toUpperCase()}`;
+    return `<div class="mp-ranking-row${p.self ? ' mp-ranking-self' : ''}">` +
+      `<span class="mp-ranking-name"><span class="mp-ranking-rank">${i + 1}.</span>${label}</span>` +
+      `<span class="mp-ranking-score">${Math.floor(p.score).toLocaleString()}</span>` +
+      `</div>`;
+  }).join('');
 }
 
 function updateMpHealthUI() {
@@ -999,6 +1028,7 @@ function applyMpSelfStatus(p) {
     burst(mpProbe.x, mpProbe.y, 'rgb(255,45,85)', 6, 80);
   }
   mpHealth = p.health;
+  mpScore = p.score || 0;
   updateMpHealthUI();
 
   if (mpHealth <= 0 && mpAlive) {
@@ -1092,6 +1122,7 @@ function enterMultiplayer() {
   mpWave = 1;
   mpReviveProgress = 0;
   mpSelfReviveRemainingMs = 0;
+  mpScore = 0;
   updateMpHealthUI();
   updateMpWaveUI();
 
@@ -1130,6 +1161,7 @@ function enterMultiplayer() {
             targetY: p.y,
             skinId: p.skinId,
             alive: p.alive,
+            score: p.score || 0,
             reviveProgress: p.reviveProgress || 0,
           });
         }
@@ -1145,6 +1177,7 @@ function enterMultiplayer() {
         });
       });
       updateMpRoomInfo();
+      renderMpRanking();
     },
     message => {
       mpConnectError = message;
@@ -1167,6 +1200,7 @@ function enterMultiplayer() {
         existing.targetX = p.x;
         existing.targetY = p.y;
         existing.alive = p.alive;
+        existing.score = p.score || 0;
         existing.reviveProgress = p.reviveProgress || 0;
       } else {
         mpRemote.set(p.id, {
@@ -1176,6 +1210,7 @@ function enterMultiplayer() {
           targetY: p.y,
           skinId: p.skinId,
           alive: p.alive,
+          score: p.score || 0,
           reviveProgress: p.reviveProgress || 0,
         });
       }
@@ -1183,6 +1218,13 @@ function enterMultiplayer() {
     // Reconcile against the full snapshot too, as a safety net alongside mp:playerLeft.
     for (const id of mpRemote.keys()) {
       if (!seenPlayers.has(id)) mpRemote.delete(id);
+    }
+
+    // Throttled — a full DOM rebuild every 50ms tick would be wasted work for a list that only needs to feel "live", not frame-perfect.
+    const nowMs = performance.now();
+    if (nowMs - mpRankingLastRenderAt > 250) {
+      mpRankingLastRenderAt = nowMs;
+      renderMpRanking();
     }
 
     const seenEnemies = new Set();
@@ -1224,9 +1266,11 @@ function exitMultiplayer() {
   mpSelfId = '';
   mpConnectError = '';
   mpAlive = true;
+  mpScore = 0;
   particles = [];
   document.getElementById('mp-hud').classList.remove('visible');
   document.getElementById('mp-gameover-screen').classList.remove('active');
+  document.getElementById('mp-ranking').innerHTML = '';
   state = 'menu';
   showScreen('menu');
 }

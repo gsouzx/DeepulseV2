@@ -37,9 +37,9 @@ const ENEMY_SPAWN_PADDING = 40;
 
 // Same per-type stats as frontend/src/entities/enemy-types.ts.
 const ENEMY_SPECS = {
-  jellyfish: { speed: 80, r: 18, hp: 1, dmg: 20 },
-  angler: { speed: 104, r: 14, hp: 2, dmg: 30 },
-  leviathan: { speed: 56, r: 26, hp: 4, dmg: 40 },
+  jellyfish: { speed: 80, r: 18, hp: 1, dmg: 20, points: 100 },
+  angler: { speed: 104, r: 14, hp: 2, dmg: 30, points: 200 },
+  leviathan: { speed: 56, r: 26, hp: 4, dmg: 40, points: 500 },
 };
 const ENEMY_TYPE_IDS = Object.keys(ENEMY_SPECS);
 
@@ -64,7 +64,7 @@ const DEFAULT_PLAYER_RADIUS = 14;
 
 /**
  * @type {Map<string, {
- *   players: Map<string, { x: number, y: number, skinId: string, health: number, maxHealth: number, radius: number, alive: boolean, diedAt: number|null, reviveProgressMs: number, updatedAt: number }>,
+ *   players: Map<string, { x: number, y: number, skinId: string, health: number, maxHealth: number, radius: number, alive: boolean, diedAt: number|null, reviveProgressMs: number, score: number, updatedAt: number }>,
  *   enemies: Map<string, { id: string, type: string, x: number, y: number, hp: number, speed: number }>,
  *   nextEnemyId: number,
  *   lastEnemySpawnAt: number,
@@ -144,6 +144,7 @@ function joinRoom(playerId, skinId, maxHealth, radius) {
     alive: true,
     diedAt: null,
     reviveProgressMs: 0,
+    score: 0,
     updatedAt: Date.now(),
   });
   room.peakPlayers = Math.max(room.peakPlayers, room.players.size);
@@ -244,6 +245,7 @@ function getRoomPlayers(roomId) {
     health: p.health,
     maxHealth: p.maxHealth,
     alive: p.alive,
+    score: p.score,
     reviveProgress: Math.min(1, p.reviveProgressMs / REVIVE_HOLD_MS),
     selfReviveRemainingMs: p.alive || p.diedAt === null
       ? 0
@@ -342,7 +344,8 @@ function stepEnemies(roomId, dtSeconds) {
 /**
  * Same rule as single-player's checkCollisions(): every tick a player
  * overlaps a live enemy, the enemy loses 1 hp and the player takes
- * `dmg * CONTACT_DAMAGE_FACTOR`. Health clamps at 0, which now flips the
+ * `dmg * CONTACT_DAMAGE_FACTOR`. The player who lands the killing blow is
+ * credited the enemy's points. Health clamps at 0, which now flips the
  * player to `alive: false` and starts their revive clock — they stop
  * taking/dealing damage and enemies stop chasing them (see stepEnemies)
  * until updateRevives()/respawnPlayer() brings them back. Each enemy kill
@@ -366,6 +369,9 @@ function applyCollisions(roomId) {
         player.alive = false;
         player.diedAt = Date.now();
         player.reviveProgressMs = 0;
+      }
+      if (enemy.hp <= 0) {
+        player.score += spec.points;
       }
     });
   });

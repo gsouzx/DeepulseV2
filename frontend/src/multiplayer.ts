@@ -12,6 +12,7 @@ export interface RemotePlayer {
   health: number;
   maxHealth: number;
   alive: boolean;
+  score: number;
   /** 0..1 — how close a nearby teammate is to fully reviving this player (0 when alive or nobody's helping). */
   reviveProgress: number;
   /** How much longer this player must wait before the self-service "Reviver" button works (0 when alive or the cooldown has elapsed). */

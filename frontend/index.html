@@ -140,6 +140,39 @@
 
     #mp-hud-tr { top: 52px; right: 0; text-align: right; }
 
+    /* Compact agar.io-style live ranking — minimal chrome, just enough contrast to read over the game. */
+    .mp-ranking {
+      margin-top: 10px;
+      padding: 6px 10px;
+      background: rgba(3,12,24,0.55);
+      border-radius: 4px;
+      min-width: 150px;
+      text-align: left;
+    }
+
+    .mp-ranking-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 14px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.7;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+
+    .mp-ranking-row.mp-ranking-self {
+      color: var(--pulse);
+      font-weight: 700;
+      text-shadow: 0 0 8px rgba(0,245,212,0.5);
+    }
+
+    .mp-ranking-rank {
+      opacity: 0.7;
+      margin-right: 3px;
+    }
+
     #mp-health-bar-wrap {
       position: absolute;
       bottom: 14px; left: 50%; transform: translateX(-50%);
@@ -841,13 +874,14 @@
     <div id="wave-notify"></div>
   </div>
 
-  <!-- MULTIPLAYER (TEST MODE) HUD — intentionally minimal beyond health, nickname/scoreboard come later -->
+  <!-- MULTIPLAYER (TEST MODE) HUD — intentionally minimal beyond health, nickname system comes later -->
   <div id="mp-hud">
     <div class="mp-info" id="mp-room-info">Conectando...</div>
     <button class="btn btn-secondary mp-leave-btn" id="btn-mp-leave">Sair</button>
     <div class="hud-corner" id="mp-hud-tr">
       <div class="hud-label">Wave</div>
       <div class="hud-value" id="mp-hud-wave">1</div>
+      <div class="mp-ranking" id="mp-ranking"></div>
     </div>
     <div id="mp-health-bar-wrap">
       <div class="bar-label">HULL INTEGRITY</div>
