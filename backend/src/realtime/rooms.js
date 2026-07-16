@@ -45,6 +45,11 @@ const ENEMY_TYPE_IDS = Object.keys(ENEMY_SPECS);
 
 // Same per-frame-of-contact damage factor as single-player's checkCollisions().
 const CONTACT_DAMAGE_FACTOR = 0.5;
+// Same shield-kill discount as single-player's checkCollisions() shieldActive branch.
+const SHIELD_KILL_SCORE_FACTOR = 0.5;
+// Sanity clamp on client-reported shield duration — no anti-cheat validation elsewhere in
+// this test mode, but an unbounded value here would let a client claim permanent invulnerability.
+const MAX_SHIELD_DURATION_MS = 10000;
 
 // ── Wave progression (shared by the whole room) ────────────────────────
 const WAVE_ENEMY_BASE = 6; // kills needed to clear wave 1
@@ -64,7 +69,7 @@ const DEFAULT_PLAYER_RADIUS = 14;
 
 /**
  * @type {Map<string, {
- *   players: Map<string, { x: number, y: number, skinId: string, health: number, maxHealth: number, radius: number, alive: boolean, diedAt: number|null, reviveProgressMs: number, score: number, updatedAt: number }>,
+ *   players: Map<string, { x: number, y: number, skinId: string, health: number, maxHealth: number, radius: number, alive: boolean, diedAt: number|null, reviveProgressMs: number, score: number, shieldUntil: number, updatedAt: number }>,
  *   enemies: Map<string, { id: string, type: string, x: number, y: number, hp: number, speed: number }>,
  *   nextEnemyId: number,
  *   lastEnemySpawnAt: number,
@@ -145,6 +150,7 @@ function joinRoom(playerId, skinId, maxHealth, radius) {
     diedAt: null,
     reviveProgressMs: 0,
     score: 0,
+    shieldUntil: 0,
     updatedAt: Date.now(),
   });
   room.peakPlayers = Math.max(room.peakPlayers, room.players.size);
@@ -163,6 +169,24 @@ function updatePosition(playerId, x, y) {
   const current = room?.players.get(playerId);
   if (!current) return;
   room.players.set(playerId, { ...current, x, y, updatedAt: Date.now() });
+}
+
+/**
+ * Client-authoritative timing (same trust level as position updates in this
+ * test mode): the client decides when its shield activates and for how
+ * long, and just informs the server so applyCollisions() can treat the
+ * player as invulnerable and every other client can render the glow around
+ * them. Duration is clamped so a malicious payload can't claim permanent
+ * invulnerability.
+ */
+function activateShield(playerId, durationMs) {
+  const roomId = playerRoom.get(playerId);
+  if (!roomId) return;
+  const room = rooms.get(roomId);
+  const player = room?.players.get(playerId);
+  if (!player || !player.alive) return;
+  const clampedDuration = Math.min(MAX_SHIELD_DURATION_MS, Math.max(0, sanitizePositiveNumber(durationMs, 0)));
+  player.shieldUntil = Date.now() + clampedDuration;
 }
 
 /** Shared by both revive paths — brings a downed player back at full health, in the middle of the map. */
@@ -246,6 +270,7 @@ function getRoomPlayers(roomId) {
     maxHealth: p.maxHealth,
     alive: p.alive,
     score: p.score,
+    shieldActive: p.shieldUntil > Date.now(),
     reviveProgress: Math.min(1, p.reviveProgressMs / REVIVE_HOLD_MS),
     selfReviveRemainingMs: p.alive || p.diedAt === null
       ? 0
@@ -344,7 +369,10 @@ function stepEnemies(roomId, dtSeconds) {
 /**
  * Same rule as single-player's checkCollisions(): every tick a player
  * overlaps a live enemy, the enemy loses 1 hp and the player takes
- * `dmg * CONTACT_DAMAGE_FACTOR`. The player who lands the killing blow is
+ * `dmg * CONTACT_DAMAGE_FACTOR` — unless their shield is up (shieldUntil in
+ * the future), in which case they take no damage and instead one-shot the
+ * enemy for a half-points kill, exactly like single-player's shieldActive
+ * branch. The player who lands the killing blow (shielded or not) is
  * credited the enemy's points. Health clamps at 0, which now flips the
  * player to `alive: false` and starts their revive clock — they stop
  * taking/dealing damage and enemies stop chasing them (see stepEnemies)
@@ -354,6 +382,7 @@ function stepEnemies(roomId, dtSeconds) {
 function applyCollisions(roomId) {
   const room = rooms.get(roomId);
   if (!room || room.players.size === 0 || room.enemies.size === 0) return;
+  const now = Date.now();
 
   room.enemies.forEach(enemy => {
     if (enemy.hp <= 0) return;
@@ -363,11 +392,17 @@ function applyCollisions(roomId) {
       const dist = Math.hypot(player.x - enemy.x, player.y - enemy.y);
       if (dist >= player.radius + spec.r) return;
 
+      if (player.shieldUntil > now) {
+        enemy.hp = 0;
+        player.score += Math.floor(spec.points * SHIELD_KILL_SCORE_FACTOR);
+        return;
+      }
+
       enemy.hp -= 1;
       player.health = Math.max(0, player.health - spec.dmg * CONTACT_DAMAGE_FACTOR);
       if (player.health <= 0) {
         player.alive = false;
-        player.diedAt = Date.now();
+        player.diedAt = now;
         player.reviveProgressMs = 0;
       }
       if (enemy.hp <= 0) {
@@ -405,6 +440,7 @@ module.exports = {
   WORLD_HEIGHT,
   joinRoom,
   updatePosition,
+  activateShield,
   respawnPlayer,
   updateRevives,
   leaveRoom,

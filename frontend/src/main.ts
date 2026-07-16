@@ -71,6 +71,8 @@ const CFG = {
   maxHealth:     100,
   maxShields:    3,
   shieldCooldown:8000,  // ms
+  shieldDurationSolo: 2500,        // ms
+  shieldDurationMultiplayer: 4000, // ms — 60% longer: mp throws more simultaneous threats (other players' fights + shared enemies) at once
   baseEnemySpeed:80,
   enemySpeedGrow:8,     // per wave
   waveEnemyBase: 4,
@@ -99,10 +101,10 @@ let enemiesForWave  = CFG.waveEnemyBase;
 let activeSkin      = SKINS[0];
 
 // ── Multiplayer (test mode — networking infra + server-simulated enemies,
-// server-authoritative collision/damage/death/wave/revive/scoring; still no
-// nickname/shield system) ────────────────────────────────────────────────
+// server-authoritative collision/damage/death/wave/revive/scoring/shield;
+// still no nickname system) ─────────────────────────────────────────────
 // Deliberately separate from single-player state: its own local position,
-// its own render path, own score bookkeeping. See src/multiplayer.ts.
+// its own render path, own shield/score bookkeeping. See src/multiplayer.ts.
 // Enemies and remote players are tracked in the server's fixed "world
 // space" (mpWorldWidth x mpWorldHeight); drawMultiplayer() maps that to
 // this client's own canvas size so it looks right regardless of window size.
@@ -131,6 +133,7 @@ window.addEventListener('keydown', e => {
   if (e.code === 'Space' && document.activeElement?.tagName !== 'INPUT') {
     e.preventDefault();
     if (state === 'playing') activateShield();
+    else if (state === 'mp') activateMpShield();
   }
   if (e.code === 'Escape' && state === 'playing') togglePause();
 });
@@ -138,7 +141,10 @@ window.addEventListener('keyup', e => { keys[e.code] = false; });
 
 // Mobile joystick + action button — no-op shell on desktop (see touch-controls.ts).
 const touchControls = new TouchControls();
-touchControls.onAction(() => { if (state === 'playing') activateShield(); });
+touchControls.onAction(() => {
+  if (state === 'playing') activateShield();
+  else if (state === 'mp') activateMpShield();
+});
 
 // ── Screen Manager ────────────────────────────────────
 const screens = {
@@ -330,6 +336,17 @@ function renderProbeGlyph(targetCtx, x, y, r, skin) {
   noGlow(targetCtx);
 }
 
+/** Shield glow ring — shared by single-player's own probe and multiplayer's local/remote probes, so the effect reads identically everywhere it can appear. */
+function drawShieldRing(targetCtx, x, y, r) {
+  targetCtx.beginPath();
+  targetCtx.arc(x, y, r + 12 + Math.sin(Date.now() * 0.01) * 3, 0, Math.PI * 2);
+  targetCtx.strokeStyle = `rgba(123,47,255,0.8)`;
+  targetCtx.lineWidth = 2;
+  glow(targetCtx, C.energy, 20);
+  targetCtx.stroke();
+  noGlow(targetCtx);
+}
+
 function drawProbe() {
   const { x, y, r, thrustTime } = probe;
   const skin = activeSkin;
@@ -345,15 +362,7 @@ function drawProbe() {
   });
 
   // Shield effect (ability color — stays consistent across skins)
-  if (shieldActive) {
-    ctx.beginPath();
-    ctx.arc(x, y, r + 12 + Math.sin(Date.now() * 0.01) * 3, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(123,47,255,0.8)`;
-    ctx.lineWidth = 2;
-    glow(ctx, C.energy, 20);
-    ctx.stroke();
-    noGlow(ctx);
-  }
+  if (shieldActive) drawShieldRing(ctx, x, y, r);
 
   renderProbeGlyph(ctx, x, y, r, skin);
 
@@ -541,7 +550,7 @@ function drawParticles() {
 function activateShield() {
   if (shieldActive || shields <= 0 || shieldCooldown > 0) return;
   shieldActive = true;
-  shieldTimer  = 2500;
+  shieldTimer  = CFG.shieldDurationSolo;
   shields--;
   updateShieldUI();
   burst(probe.x, probe.y, 'rgb(123,47,255)', 15, 150);
@@ -954,6 +963,10 @@ let mpReviveProgress = 0; // 0..1, from a nearby teammate reviving us
 let mpSelfReviveRemainingMs = 0;
 let mpScore = 0;
 let mpRankingLastRenderAt = 0;
+let mpShields = CFG.maxShields;
+let mpShieldActive = false;
+let mpShieldTimer = 0;
+let mpShieldCooldown = 0;
 
 function updateMpRoomInfo() {
   const el = document.getElementById('mp-room-info');
@@ -998,6 +1011,46 @@ function renderMpRanking() {
 function updateMpHealthUI() {
   const pct = mpMaxHealth > 0 ? (mpHealth / mpMaxHealth) * 100 : 0;
   document.getElementById('mp-health-bar-inner').style.width = pct + '%';
+}
+
+function updateMpShieldUI() {
+  const container = document.getElementById('mp-shield-pips');
+  container.innerHTML = '';
+  for (let i = 0; i < CFG.maxShields; i++) {
+    const pip = document.createElement('div');
+    pip.className = 'pip' + (i >= mpShields ? ' empty' : '');
+    container.appendChild(pip);
+  }
+}
+
+/** Same charge/cooldown rules as single-player's activateShield(), just with the multiplayer duration and its own client-local counters — see CFG.shieldDurationMultiplayer. Tells the server via mp:shield so collisions (invulnerability + instakill) and other clients' rendering of this player's glow both work. */
+function activateMpShield() {
+  if (mpShieldActive || mpShields <= 0 || mpShieldCooldown > 0) return;
+  mpShieldActive = true;
+  mpShieldTimer = CFG.shieldDurationMultiplayer;
+  mpShields--;
+  updateMpShieldUI();
+  burst(mpProbe.x, mpProbe.y, 'rgb(123,47,255)', 15, 150);
+  mpClient.activateShield(CFG.shieldDurationMultiplayer);
+}
+
+/** Mirrors single-player's updateShield(dt) — ticks down the active duration, then the recharge cooldown. Runs even while downed so a teammate reviving you doesn't also cost you your recharge progress. */
+function updateMpShield(dt) {
+  if (mpShieldActive) {
+    mpShieldTimer -= dt * 1000;
+    if (mpShieldTimer <= 0) {
+      mpShieldActive = false;
+      mpShieldCooldown = CFG.shieldCooldown;
+    }
+  }
+  if (mpShieldCooldown > 0) {
+    mpShieldCooldown -= dt * 1000;
+    if (mpShieldCooldown <= 0 && mpShields < CFG.maxShields) {
+      mpShields = Math.min(mpShields + 1, CFG.maxShields);
+      mpShieldCooldown = mpShields < CFG.maxShields ? CFG.shieldCooldown : 0;
+      updateMpShieldUI();
+    }
+  }
 }
 
 function updateMpWaveUI() {
@@ -1123,8 +1176,13 @@ function enterMultiplayer() {
   mpReviveProgress = 0;
   mpSelfReviveRemainingMs = 0;
   mpScore = 0;
+  mpShields = CFG.maxShields;
+  mpShieldActive = false;
+  mpShieldTimer = 0;
+  mpShieldCooldown = 0;
   updateMpHealthUI();
   updateMpWaveUI();
+  updateMpShieldUI();
 
   mpProbe = { x: canvas.width / 2, y: canvas.height / 2 };
   mpRoomId = '';
@@ -1162,6 +1220,7 @@ function enterMultiplayer() {
             skinId: p.skinId,
             alive: p.alive,
             score: p.score || 0,
+            shieldActive: p.shieldActive || false,
             reviveProgress: p.reviveProgress || 0,
           });
         }
@@ -1201,6 +1260,7 @@ function enterMultiplayer() {
         existing.targetY = p.y;
         existing.alive = p.alive;
         existing.score = p.score || 0;
+        existing.shieldActive = p.shieldActive || false;
         existing.reviveProgress = p.reviveProgress || 0;
       } else {
         mpRemote.set(p.id, {
@@ -1211,6 +1271,7 @@ function enterMultiplayer() {
           skinId: p.skinId,
           alive: p.alive,
           score: p.score || 0,
+          shieldActive: p.shieldActive || false,
           reviveProgress: p.reviveProgress || 0,
         });
       }
@@ -1276,6 +1337,8 @@ function exitMultiplayer() {
 }
 
 function updateMultiplayer(dt, now) {
+  updateMpShield(dt);
+
   // A downed player sends no input and stays put — a teammate has to reach
   // THEM — but still watches the world (enemies, teammates) keep moving,
   // via the lerp below, which runs regardless of mpAlive.
@@ -1346,13 +1409,16 @@ function drawMultiplayer() {
     const skin = findSkinById(p.skinId);
     const r = getEffectiveRadius(skin, CFG.probeRadius) * scale;
     if (p.alive) {
-      renderProbeGlyph(ctx, worldToLocalX(p.x), worldToLocalY(p.y), r, skin);
+      const x = worldToLocalX(p.x), y = worldToLocalY(p.y);
+      if (p.shieldActive) drawShieldRing(ctx, x, y, r);
+      renderProbeGlyph(ctx, x, y, r, skin);
     } else {
       renderMpWreck(worldToLocalX(p.x), worldToLocalY(p.y), r, skin, p.reviveProgress || 0);
     }
   });
 
   if (mpAlive) {
+    if (mpShieldActive) drawShieldRing(ctx, mpProbe.x, mpProbe.y, mpProbeRadius);
     renderProbeGlyph(ctx, mpProbe.x, mpProbe.y, mpProbeRadius, activeSkin);
   } else {
     renderMpWreck(mpProbe.x, mpProbe.y, mpProbeRadius, activeSkin, mpReviveProgress);

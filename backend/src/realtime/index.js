@@ -5,6 +5,7 @@ const {
   WORLD_HEIGHT,
   joinRoom,
   updatePosition,
+  activateShield,
   respawnPlayer,
   updateRevives,
   leaveRoom,
@@ -54,6 +55,10 @@ function attachRealtime(httpServer, { allowedOrigins }) {
 
     socket.on('mp:respawn', () => {
       respawnPlayer(socket.id);
+    });
+
+    socket.on('mp:shield', payload => {
+      activateShield(socket.id, payload?.durationMs);
     });
 
     socket.on('disconnect', () => {

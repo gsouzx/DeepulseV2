@@ -13,6 +13,8 @@ export interface RemotePlayer {
   maxHealth: number;
   alive: boolean;
   score: number;
+  /** Whether this player currently has their shield up — server-authoritative, so remote clients can render the glow around them too. */
+  shieldActive: boolean;
   /** 0..1 — how close a nearby teammate is to fully reviving this player (0 when alive or nobody's helping). */
   reviveProgress: number;
   /** How much longer this player must wait before the self-service "Reviver" button works (0 when alive or the cooldown has elapsed). */
@@ -100,6 +102,11 @@ export class MultiplayerClient {
   /** Brings this player back into the room at full health — the death screen's "Reviver" button. */
   respawn(): void {
     this.socket?.emit('mp:respawn');
+  }
+
+  /** Activates this player's shield for the given duration — server treats it as invulnerable and one-shots the next enemy it touches, same rule as single-player. */
+  activateShield(durationMs: number): void {
+    this.socket?.emit('mp:shield', { durationMs });
   }
 
   get selfId(): string | undefined {

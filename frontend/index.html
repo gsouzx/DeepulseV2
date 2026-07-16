@@ -253,8 +253,8 @@
       transition: width 0.2s ease;
     }
 
-    #shield-pips {
-      display: flex; gap: 6px; margin-top: 2px;
+    #shield-pips, #mp-shield-pips {
+      display: flex; gap: 6px; margin-top: 2px; justify-content: center;
     }
 
     .pip {
@@ -886,6 +886,7 @@
     <div id="mp-health-bar-wrap">
       <div class="bar-label">HULL INTEGRITY</div>
       <div id="mp-health-bar-outer"><div id="mp-health-bar-inner"></div></div>
+      <div id="mp-shield-pips"></div>
     </div>
   </div>
 
