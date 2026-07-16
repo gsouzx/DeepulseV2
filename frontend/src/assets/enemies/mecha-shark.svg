@@ -1,0 +1,36 @@
+<svg width="680" height="400" viewBox="0 0 680 400" xmlns="http://www.w3.org/2000/svg">
+<title>Mecha Shark enemy</title>
+<defs>
+<linearGradient id="sharkBody" x1="0%" y1="0%" x2="100%" y2="60%">
+<stop offset="0%" stop-color="#7fb8c9"/>
+<stop offset="45%" stop-color="#3d7a8a"/>
+<stop offset="75%" stop-color="#c98a3d"/>
+<stop offset="100%" stop-color="#8a3d10"/>
+</linearGradient>
+<radialGradient id="sharkEye" cx="50%" cy="50%" r="50%">
+<stop offset="0%" stop-color="#fff2b0"/>
+<stop offset="60%" stop-color="#ffb800"/>
+<stop offset="100%" stop-color="#8a3d10" stop-opacity="0"/>
+</radialGradient>
+</defs>
+<path d="M120 210 C170 160 260 140 360 150 C440 158 500 175 560 190 L620 205 L560 220 C500 235 440 250 360 258 C260 268 170 250 120 210 Z" fill="url(#sharkBody)" stroke="#0a2a35" stroke-width="1"/>
+<path d="M300 150 L330 100 L355 155 Z" fill="#3d7a8a" stroke="#0a2a35" stroke-width="0.5"/>
+<path d="M560 190 L610 165 L600 210 L560 220 Z" fill="#7a3d10" stroke="#0a2a35" stroke-width="0.5"/>
+<path d="M180 215 L150 260 L210 240 Z" fill="#3d7a8a" opacity="0.8"/>
+<g stroke="#0a2a35" stroke-width="0.7" fill="none">
+<path d="M260 165 L260 245"/>
+<path d="M330 158 L335 252"/>
+<path d="M400 158 L405 255"/>
+<path d="M470 168 L473 250"/>
+</g>
+<g fill="#4be07a" opacity="0.85">
+<rect x="345" y="195" width="14" height="6" rx="2"/>
+<rect x="370" y="195" width="14" height="6" rx="2"/>
+<rect x="395" y="195" width="14" height="6" rx="2"/>
+<rect x="420" y="195" width="14" height="6" rx="2"/>
+</g>
+<circle cx="205" cy="200" r="26" fill="url(#sharkEye)"/>
+<circle cx="205" cy="200" r="10" fill="#3a1c00"/>
+<circle cx="205" cy="200" r="4" fill="#fff2b0"/>
+<path d="M130 210 L100 195 L100 205 L120 215 L100 222 L100 230 Z" fill="#0a2a35"/>
+</svg>

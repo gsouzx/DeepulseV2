@@ -1,0 +1,33 @@
+<svg width="680" height="560" viewBox="0 0 680 560" xmlns="http://www.w3.org/2000/svg">
+<title>Sentinel Starfish enemy</title>
+<defs>
+<linearGradient id="armGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+<stop offset="0%" stop-color="#ff9ecf"/>
+<stop offset="50%" stop-color="#7b2fff"/>
+<stop offset="100%" stop-color="#2a1a6e"/>
+</linearGradient>
+<radialGradient id="coreGlow" cx="50%" cy="50%" r="50%">
+<stop offset="0%" stop-color="#e0b0ff"/>
+<stop offset="55%" stop-color="#7b2fff"/>
+<stop offset="100%" stop-color="#2a1a6e" stop-opacity="0"/>
+</radialGradient>
+</defs>
+<g transform="translate(340,280)">
+<g id="arm">
+<path d="M0 0 L-40 -30 L-70 -230 C-72 -250 -50 -260 -35 -245 L-15 -60 Z" fill="url(#armGrad)" stroke="#1a0f45" stroke-width="1"/>
+<circle cx="-52" cy="-190" r="9" fill="#00f5d4" opacity="0.85"/>
+<circle cx="-45" cy="-140" r="6" fill="#00f5d4" opacity="0.6"/>
+</g>
+<use href="#arm" transform="rotate(72)"/>
+<use href="#arm" transform="rotate(144)"/>
+<use href="#arm" transform="rotate(216)"/>
+<use href="#arm" transform="rotate(288)"/>
+<circle r="78" fill="url(#armGrad)" stroke="#1a0f45" stroke-width="1"/>
+<circle r="46" fill="url(#coreGlow)"/>
+<circle r="20" fill="#1a0f45"/>
+<circle r="9" fill="#e0b0ff"/>
+<circle cx="-30" cy="-25" r="5" fill="#00f5d4"/>
+<circle cx="30" cy="-25" r="5" fill="#00f5d4"/>
+<circle cx="0" cy="35" r="5" fill="#00f5d4"/>
+</g>
+</svg>

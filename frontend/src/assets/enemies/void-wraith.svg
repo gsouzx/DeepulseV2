@@ -1,0 +1,33 @@
+<svg width="680" height="620" viewBox="0 0 680 620" xmlns="http://www.w3.org/2000/svg">
+<title>Void Wraith mini-boss enemy</title>
+<defs>
+<radialGradient id="voidHead" cx="40%" cy="30%" r="75%">
+<stop offset="0%" stop-color="#b98cff"/>
+<stop offset="50%" stop-color="#5a3fb8"/>
+<stop offset="100%" stop-color="#1a1240"/>
+</radialGradient>
+<radialGradient id="voidEye" cx="50%" cy="50%" r="50%">
+<stop offset="0%" stop-color="#9df7ff"/>
+<stop offset="60%" stop-color="#2fc6d9"/>
+<stop offset="100%" stop-color="#1a1240" stop-opacity="0"/>
+</radialGradient>
+<linearGradient id="voidTent" x1="0%" y1="0%" x2="100%" y2="100%">
+<stop offset="0%" stop-color="#5a3fb8"/>
+<stop offset="100%" stop-color="#1a1240"/>
+</linearGradient>
+</defs>
+<path d="M320 220 C240 300 195 400 215 480 C230 545 275 580 315 610" fill="none" stroke="url(#voidTent)" stroke-width="20" stroke-linecap="round" opacity="0.9"/>
+<path d="M380 230 C450 305 480 400 450 470 C430 520 390 555 365 595" fill="none" stroke="url(#voidTent)" stroke-width="20" stroke-linecap="round" opacity="0.9"/>
+<path d="M280 250 C210 305 170 370 175 425 C177 460 200 485 222 500" fill="none" stroke="url(#voidTent)" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+<path d="M410 250 C480 300 520 355 515 410 C513 445 490 470 468 485" fill="none" stroke="url(#voidTent)" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+<path d="M255 215 C200 245 170 285 168 320 C167 345 180 365 195 378" fill="none" stroke="url(#voidTent)" stroke-width="10" stroke-linecap="round" opacity="0.75"/>
+<path d="M435 215 C490 245 520 285 522 320 C523 345 510 365 495 378" fill="none" stroke="url(#voidTent)" stroke-width="10" stroke-linecap="round" opacity="0.75"/>
+<ellipse cx="345" cy="255" rx="95" ry="105" fill="url(#voidHead)" stroke="#120a30" stroke-width="1"/>
+<path d="M300 190 L320 230 L295 245 L315 270 L280 260 Z" fill="#120a30" opacity="0.9"/>
+<path d="M400 195 L415 225 L440 220 L425 250 L450 255 L420 275" fill="none" stroke="#120a30" stroke-width="6" stroke-linecap="round" opacity="0.9"/>
+<circle cx="315" cy="255" r="30" fill="url(#voidEye)"/>
+<circle cx="315" cy="255" r="12" fill="#0a1a3d"/>
+<circle cx="390" cy="255" r="30" fill="url(#voidEye)"/>
+<circle cx="390" cy="255" r="12" fill="#0a1a3d"/>
+<path d="M300 305 Q350 325 400 305" fill="none" stroke="#120a30" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+</svg>

@@ -381,11 +381,13 @@ function spawnEnemy() {
   else if (side === 2) { x = rnd(0, canvas.width); y = canvas.height + padding; }
   else { x = -padding; y = rnd(0, canvas.height); }
 
-  const typeIdx = wave > 4
-    ? Math.floor(rnd(0, ENEMY_TYPES.length))
-    : Math.floor(rnd(0, Math.min(wave, ENEMY_TYPES.length)));
-
-  const type = ENEMY_TYPES[typeIdx];
+  const eligible = ENEMY_TYPES.filter(t => {
+    if (wave < (t.minWave ?? 1)) return false;
+    if (t.maxOnScreen === undefined) return true;
+    return enemies.filter(e => e.type.name === t.name).length < t.maxOnScreen;
+  });
+  if (eligible.length === 0) return; // every eligible type is already at its on-screen cap
+  const type = eligible[Math.floor(rnd(0, eligible.length))];
   const spd  = (CFG.baseEnemySpeed + wave * CFG.enemySpeedGrow) * type.speed;
 
   enemies.push({
@@ -442,11 +444,21 @@ function drawEnemies() {
 }
 
 // ── Pickups ───────────────────────────────────────────
-function spawnPickup(x, y) {
-  if (Math.random() > CFG.pickupChance) return;
+function spawnPickup(x, y, guaranteed = false) {
+  if (!guaranteed && Math.random() > CFG.pickupChance) return;
   const types = ['energy', 'health', 'shield'];
   const t     = types[Math.floor(Math.random() * types.length)];
   pickups.push({ x, y, type: t, life: 12, pulse: 0 });
+}
+
+/** Normal enemies: one chance-gated drop, same as always. Types with `pickupDrops` set (bosses) instead drop that many, guaranteed, fanned out so they don't stack on one pixel. */
+function dropEnemyPickups(e) {
+  const count = e.type.pickupDrops;
+  if (!count) { spawnPickup(e.x, e.y); return; }
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 * i) / count + rnd(-0.3, 0.3);
+    spawnPickup(e.x + Math.cos(angle) * 16, e.y + Math.sin(angle) * 16, true);
+  }
 }
 
 function updatePickups(dt) {
@@ -557,13 +569,14 @@ function updateShield(dt) {
 function checkCollisions() {
   const toRemove = [];
   enemies.forEach(e => {
-    if (dist(probe, e) < probe.r + e.r) {
+    const hitDist = e.type.hitRadius ?? (probe.r + e.r);
+    if (dist(probe, e) < hitDist) {
       if (shieldActive) {
         burst(e.x, e.y, 'rgb(123,47,255)', 12, 120);
         score += Math.floor(e.type.points * 0.5);
         toRemove.push(e);
         enemiesKilled++;
-        spawnPickup(e.x, e.y);
+        dropEnemyPickups(e);
         return;
       }
       e.hp -= 1;
@@ -571,7 +584,7 @@ function checkCollisions() {
         burst(e.x, e.y, 'rgb(255,45,85)', 14, 150);
         score += e.type.points;
         enemiesKilled++;
-        spawnPickup(e.x, e.y);
+        dropEnemyPickups(e);
         toRemove.push(e);
       } else {
         e.hitFlash = 1;
