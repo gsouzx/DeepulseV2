@@ -32,7 +32,13 @@ import { stripInvalidNicknameChars, resolveNickname, getSavedNickname, saveNickn
 import { ENEMY_TYPES, findEnemyType } from './entities/enemy-types';
 import { glow, noGlow } from './rendering/glow';
 
-const API_BASE = `${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api`;
+// Same fallback shape as multiplayer.ts's SOCKET_URL: the localhost default
+// only applies in dev, so a production build missing VITE_API_URL points at
+// the real Railway API instead of silently defaulting to localhost.
+const PRODUCTION_API_URL = 'https://deepulsev2-production.up.railway.app';
+const API_BASE = `${
+  import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : PRODUCTION_API_URL)
+}/api`;
 
 // ── Canvas Setup ──────────────────────────────────────
 const canvas = document.getElementById('gameCanvas');

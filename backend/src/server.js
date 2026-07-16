@@ -11,11 +11,16 @@ const { attachRealtime } = require('./realtime');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-// TODO: restrict this to the real Vercel domain once it's live — '*' is a
-// temporary placeholder while the frontend URL isn't final yet.
-const rawAllowedOrigins = process.env.ALLOWED_ORIGINS || '*';
-const ALLOWED_ORIGINS =
-  rawAllowedOrigins.trim() === '*' ? '*' : rawAllowedOrigins.split(',').map(origin => origin.trim());
+const HOST = '0.0.0.0';
+// Comma-separated allowlist, no wildcard fallback: an empty/unset
+// ALLOWED_ORIGINS fails closed (cors rejects every cross-origin request)
+// rather than failing open to '*'. Local dev sets this in backend/.env;
+// production must set it on the host (Railway) to the real frontend
+// domain(s), e.g. https://deeppulse-three.vercel.app.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
 
 // Middleware
 app.use(cors({
@@ -57,10 +62,10 @@ app.use((err, req, res, next) => {
 const httpServer = http.createServer(app);
 attachRealtime(httpServer, { allowedOrigins: ALLOWED_ORIGINS });
 
-httpServer.listen(PORT, () => {
-  console.log(`\n🌊 DeepPulse API running on http://localhost:${PORT}`);
-  console.log(`📡 Leaderboard: http://localhost:${PORT}/api/leaderboard`);
-  console.log(`📊 Stats:       http://localhost:${PORT}/api/stats`);
+httpServer.listen(PORT, HOST, () => {
+  console.log(`\n🌊 DeepPulse API listening on ${HOST}:${PORT}`);
+  console.log(`📡 Leaderboard: /api/leaderboard`);
+  console.log(`📊 Stats:       /api/stats`);
   console.log(`🔌 Realtime (Socket.io) attached to the same server\n`);
 });
 
